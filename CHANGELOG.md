@@ -1,5 +1,8 @@
 ## [Unreleased]
 
+### Added
+- **Worktrees for existing branches**: Allow creation of worktrees from branches that already exist.
+
 ## [0.1.4] - 2026-01-30
 
 ### Added
