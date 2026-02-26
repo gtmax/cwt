@@ -127,6 +127,7 @@ module Cwt
     end
 
     def self.refresh_list(model)
+      Git.prune_worktrees(repo_root: model.repository.root)
       model.refresh_worktrees!
     end
   end

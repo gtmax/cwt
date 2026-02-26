@@ -27,6 +27,8 @@ module Cwt
     end
 
     def self.get_status(path)
+      return { dirty: false } unless Dir.exist?(path)
+
       # Check for uncommitted changes
       # --no-optional-locks: Prevent git from writing to the index (lock contention)
       # -C path: Run git in that directory
