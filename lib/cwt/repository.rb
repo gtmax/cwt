@@ -104,7 +104,6 @@ module Cwt
                       .gsub(%r{/+}, '/')
                       .gsub(%r{^/|/$}, '')
       path = File.join(worktrees_dir, safe_name)
-      absolute_path = File.join(@root, WORKTREE_DIR, safe_name)
 
       # Ensure parent directories exist (e.g. .worktrees/feat/ for feat/my-feature)
       FileUtils.mkdir_p(File.dirname(path))
@@ -122,7 +121,7 @@ module Cwt
       # Create worktree object
       worktree = Worktree.new(
         repository: self,
-        path: absolute_path,
+        path: path,
         branch: safe_name,
         sha: nil # Will be populated on next list
       )
