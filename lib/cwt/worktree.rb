@@ -51,6 +51,20 @@ module Cwt
       end
     end
 
+    # Run switch script if it exists (fires on every worktree jump)
+    # Returns { ran: Boolean, success: Boolean }
+    def run_switch!
+      return { ran: false } unless @repository.has_switch_script?
+
+      success = system(
+        { "CWT_ROOT" => File.realpath(@repository.root), "CWT_WORKTREE" => @path },
+        @repository.switch_script_path,
+        chdir: @path
+      )
+
+      { ran: true, success: success }
+    end
+
     # Run teardown script if it exists
     # Returns { ran: Boolean, success: Boolean }
     def run_teardown!

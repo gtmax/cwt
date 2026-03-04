@@ -44,12 +44,20 @@ module Cwt
       File.join(config_dir, "teardown")
     end
 
+    def switch_script_path
+      File.join(config_dir, "switch")
+    end
+
     def has_setup_script?
       File.exist?(setup_script_path) && File.executable?(setup_script_path)
     end
 
     def has_teardown_script?
       File.exist?(teardown_script_path) && File.executable?(teardown_script_path)
+    end
+
+    def has_switch_script?
+      File.exist?(switch_script_path) && File.executable?(switch_script_path)
     end
 
     # Returns Array<Worktree>

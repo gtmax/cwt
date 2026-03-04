@@ -176,6 +176,8 @@ module Cwt
         end
       end
 
+      worktree.run_switch!
+
       puts "Launching claude in #{worktree.path}..."
       begin
         Dir.chdir(worktree.path) do
