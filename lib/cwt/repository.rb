@@ -29,7 +29,9 @@ module Cwt
     end
 
     def worktrees_dir
-      File.join(@root, WORKTREE_DIR)
+      repo_name = File.basename(@root)
+      parent = File.dirname(@root)
+      File.join(parent, WORKTREE_DIR, repo_name)
     end
 
     def config_dir
