@@ -65,9 +65,9 @@ install_user_setup() {
 #!/bin/bash
 # ~/.wotr/setup — runs when creating a new worktree in any repo.
 #
-# wotr-defaults symlinks .env, node_modules, and .claude from the repo root.
+# wotr-default-setup symlinks .env, node_modules, and .claude from the repo root.
 # Remove it to opt out. Add your own steps below.
-wotr-defaults
+wotr-default-setup
 SETUP
     chmod +x "$HOME/.wotr/setup"
     echo "  Created ~/.wotr/setup"
@@ -115,10 +115,17 @@ echo "Installing gem..."
 "$GEM" install "$GEM_FILE"
 echo
 
-# 3. Symlink binaries onto PATH
+# 3. Install binaries onto PATH
 GEM_BIN=$("$GEM" environment | awk '/EXECUTABLE DIRECTORY/ {print $NF}')
 symlink_bin "wotr" "$GEM_BIN"
-symlink_bin "wotr-defaults" "$GEM_BIN"
+# wotr-default-setup is a bash script — copy directly so the shell runs it, not RubyGems
+GEM_DIR=$("$GEM" environment gemdir)
+WOTR_DEFAULTS=$(ls "$GEM_DIR/gems/wotr-"*/exe/wotr-default-setup 2>/dev/null | tail -1)
+if [ -n "$WOTR_DEFAULTS" ] && [ -d "/opt/homebrew/bin" ]; then
+  cp "$WOTR_DEFAULTS" "/opt/homebrew/bin/wotr-default-setup"
+  chmod +x "/opt/homebrew/bin/wotr-default-setup"
+  echo "  Installed wotr-default-setup → /opt/homebrew/bin/wotr-default-setup"
+fi
 echo
 
 # 4. User setup template

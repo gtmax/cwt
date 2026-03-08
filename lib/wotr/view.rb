@@ -17,7 +17,11 @@ module Wotr
     }.freeze
 
     def self.draw(model, tui, frame)
-      content_height = [model.visible_worktrees.size + 6, frame.area.height].min
+      app_width = [frame.area.width, 100].min
+      msg_lines = wrap_text(model.message, app_width - 2).size
+      footer_height = 1 + msg_lines + 1  # top border + message lines + keys line
+
+      content_height = [model.visible_worktrees.size + 4 + footer_height, frame.area.height].min
 
       app_area = centered_app_area(tui, frame.area, width: 100, height: content_height)
 
@@ -26,7 +30,7 @@ module Wotr
         direction: :vertical,
         constraints: [
           tui.constraint_fill(1),
-          tui.constraint_length(3)
+          tui.constraint_length(footer_height)
         ]
       )
 
@@ -159,10 +163,12 @@ module Wotr
                     tui.style(**THEME[:accent])
                   end
 
-      text = [
-        tui.text_line(spans: [tui.text_span(content: model.message, style: msg_style)]),
-        tui.text_line(spans: keys)
-      ]
+      msg_width = [area.width - 2, 1].max
+      msg_lines = wrap_text(model.message, msg_width).map do |line|
+        tui.text_line(spans: [tui.text_span(content: line, style: msg_style)])
+      end
+
+      text = msg_lines + [tui.text_line(spans: keys)]
 
       footer = tui.paragraph(
         text: text,
@@ -192,6 +198,25 @@ module Wotr
       )
 
       frame.render_widget(input, area)
+    end
+
+    def self.wrap_text(text, width)
+      return [''] if text.empty?
+      return [text] if text.length <= width
+
+      lines = []
+      current = ''
+      text.split(' ').each do |word|
+        candidate = current.empty? ? word : "#{current} #{word}"
+        if candidate.length <= width
+          current = candidate
+        else
+          lines << current unless current.empty?
+          current = word
+        end
+      end
+      lines << current unless current.empty?
+      lines
     end
 
     def self.center_rect(tui, area, width_percent, height_len)

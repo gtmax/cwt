@@ -23,7 +23,7 @@ Gem::Specification.new do |spec|
     Dir["{exe,lib,sig}/**/*", "README.md", "LICENSE.txt", "CHANGELOG.md", "CODE_OF_CONDUCT.md"]
   end
   spec.bindir = 'exe'
-  spec.executables = ['wotr', 'wotr-defaults']
+  spec.executables = ['wotr']
   spec.require_paths = ['lib']
 
   spec.add_dependency 'git'

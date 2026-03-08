@@ -12,7 +12,7 @@ module Wotr
       @mode = :normal # :normal, :creating, :filtering
       @input_buffer = String.new
       @filter_query = String.new
-      @message = "Welcome to CWT"
+      @message = "Welcome to Wotr"
       @running = true
       @fetch_generation = 0
       @resume_to = nil

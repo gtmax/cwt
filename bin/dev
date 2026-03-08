@@ -57,15 +57,19 @@ case "$COMMAND" in
     echo "Installing gem..."
     "$GEM" install wotr-*.gem
     rm -f wotr-*.gem
-    # Symlink binaries into /opt/homebrew/bin so they are on PATH
+    # Symlink wotr (gem executable) into /opt/homebrew/bin
     GEM_BIN=$("$GEM" environment | awk '/EXECUTABLE DIRECTORY/ {print $NF}')
-    if [ -d "/opt/homebrew/bin" ]; then
-      for bin in wotr wotr-defaults; do
-        if [ -f "$GEM_BIN/$bin" ]; then
-          ln -sf "$GEM_BIN/$bin" "/opt/homebrew/bin/$bin"
-          echo "Symlinked $bin → /opt/homebrew/bin/$bin"
-        fi
-      done
+    if [ -d "/opt/homebrew/bin" ] && [ -f "$GEM_BIN/wotr" ]; then
+      ln -sf "$GEM_BIN/wotr" "/opt/homebrew/bin/wotr"
+      echo "Symlinked wotr → /opt/homebrew/bin/wotr"
+    fi
+    # Copy wotr-default-setup (bash script) directly — not via RubyGems wrapper
+    GEM_DIR=$("$GEM" environment gemdir)
+    WOTR_DEFAULT_SETUP=$(ls "$GEM_DIR/gems/wotr-"*/exe/wotr-default-setup 2>/dev/null | tail -1)
+    if [ -n "$WOTR_DEFAULT_SETUP" ] && [ -d "/opt/homebrew/bin" ]; then
+      cp "$WOTR_DEFAULT_SETUP" "/opt/homebrew/bin/wotr-default-setup"
+      chmod +x "/opt/homebrew/bin/wotr-default-setup"
+      echo "Installed wotr-default-setup → /opt/homebrew/bin/wotr-default-setup"
     fi
     # Create ~/.wotr/setup template if it doesn't exist yet
     if [ ! -f "$HOME/.wotr/setup" ]; then

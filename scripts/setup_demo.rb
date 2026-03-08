@@ -3,7 +3,7 @@ require 'fileutils'
 require 'open3'
 
 # Configuration
-DEMO_DIR = "cwt_demo_repo"
+DEMO_DIR = "wotr_demo_repo"
 WORKTREES_DIR = ".worktrees"
 
 # Funny session names (The Prototyper's chaos)
@@ -28,7 +28,7 @@ def run(cmd)
   stdout
 end
 
-puts "🚀 Setting up CWT Demo Environment..."
+puts "🚀 Setting up wotr Demo Environment..."
 
 # 1. Create and Init Repo
 if Dir.exist?(DEMO_DIR)
@@ -67,4 +67,4 @@ File.write("node_modules", "fake_node_modules") # Just a file for demo
 puts "\n✨ Demo Ready!"
 puts "To run the demo:"
 puts "  cd #{DEMO_DIR}"
-puts "  cwt"
+puts "  wotr"

@@ -46,10 +46,12 @@ module Wotr
     #   1. ~/.wotr/setup  (user-level, if exists)
     #   2. .wotr/setup    (repo-level, if exists)
     #   3. defaults      (only if neither script exists)
-    # Scripts can call `wotr-defaults` to opt into default behaviour explicitly.
+    # Scripts can call `wotr-default-setup` to opt into default behaviour explicitly.
     def run_setup!(visible: true)
       has_user = @repository.has_user_setup_script?
       has_repo = @repository.has_setup_script?
+
+      puts "\e[1;36m🌊 Setting up new worktree 🌊\e[0m\n\n" if visible
 
       if has_user || has_repo
         run_hook(@repository.user_setup_script_path, label: "~/.wotr/setup", visible: visible) if has_user
@@ -147,7 +149,7 @@ module Wotr
 
     def run_hook(script_path, label:, visible: true)
       if visible
-        puts "\e[1;36m=== Running #{label} ===\e[0m"
+        puts "\e[1;36m🌊 Running #{label} 🌊\e[0m"
         puts
       end
 

@@ -1,29 +1,18 @@
 #!/usr/bin/env bash
-# wotr-defaults — apply wotr's built-in default worktree setup.
+# wotr-default-setup — apply wotr's built-in default worktree setup.
 #
-# Call this from ~/.wotr/setup or .wotr/setup to opt into the defaults
-# while still running your own custom steps:
-#
-#   #!/bin/bash
-#   wotr-defaults        # apply defaults
-#   pnpm install        # then your custom steps
+# Sets up .claude/ for the worktree (symlinks shared config, isolates
+# settings.local.json). Tech-specific setup (node_modules, etc.) belongs
+# in your repo's .wotr/setup.
 #
 # Requires WOTR_ROOT to be set (done automatically by wotr).
 
 set -e
 
 if [ -z "$WOTR_ROOT" ]; then
-  echo "wotr-defaults: WOTR_ROOT is not set. Run this from within a wotr setup hook." >&2
+  echo "wotr-default-setup: WOTR_ROOT is not set. Run this from within a wotr setup hook." >&2
   exit 1
 fi
-
-# Plain symlinks: safe to share across worktrees
-for file in .env node_modules; do
-  if [ -e "$WOTR_ROOT/$file" ] && [ ! -e "$file" ]; then
-    ln -sf "$WOTR_ROOT/$file" "$file"
-    echo "  Symlinked $file"
-  fi
-done
 
 # .claude: create a real directory, symlink all contents from root,
 # but copy settings.local.json so runtime permission approvals stay isolated.
