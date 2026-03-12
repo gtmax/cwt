@@ -1,0 +1,12 @@
+#!/usr/bin/env ruby
+# wotr-output key=value [key=value ...]
+# Emits a JSON object to stdout. Used by inquire scripts to return structured results.
+#
+# Example:
+#   wotr-output status=owned owner=/path/to/worktree
+#   wotr-output status=unowned
+#   wotr-output status=incompatible reason="2 pending migrations"
+
+require 'json'
+pairs = ARGV.map { |a| a.split('=', 2) }
+puts JSON.generate(pairs.to_h)

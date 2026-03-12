@@ -4,6 +4,7 @@ require "ratatui_ruby"
 require "thread"
 require_relative "repository"
 require_relative "worktree"
+require_relative "config"
 require_relative "model"
 require_relative "view"
 require_relative "update"
@@ -68,6 +69,8 @@ module Wotr
           cmd = nil
           if event.key?
             cmd = Update.handle(model, { type: :key_press, key: event })
+          elsif event.mouse?
+            cmd = Update.handle_mouse(model, event)
           elsif event.paste?
             cmd = Update.handle(model, { type: :paste, content: event.content })
           elsif event.resize?
@@ -81,7 +84,30 @@ module Wotr
           # Process Background Queue
           while !main_queue.empty?
             msg = main_queue.pop(true) rescue nil
-            Update.handle(model, msg) if msg
+            next unless msg
+            case msg[:type]
+            when :trigger_resource_poll
+              model.finish_background_activity
+              model.set_message(msg[:message]) if msg[:message]
+              start_resource_poll(model, main_queue)
+            when :finish_background_activity
+              model.finish_background_activity
+            when :task_log_line
+              model.append_task_log(msg[:line])
+            when :task_complete
+              model.finish_background_activity
+              model.clear_task_log
+              model.set_message(msg[:message]) if msg[:message]
+              result = msg[:result]
+              handle_command(result, model, tui, main_queue) if result
+            else
+              Update.handle(model, msg)
+            end
+          end
+
+          # Poll resources on a timer
+          if model.has_resources? && model.resource_poll_due?
+            start_resource_poll(model, main_queue)
           end
         end
       end
@@ -108,12 +134,57 @@ module Wotr
       when :quit
         model.quit
       when :delete_worktree
-        # Suspend TUI for visible teardown output
-        RatatuiRuby.restore_terminal
-        puts "\e[H\e[2J" # Clear screen
-        result = Update.handle(model, cmd)
-        RatatuiRuby.init_terminal
-        handle_command(result, model, tui, main_queue)
+        wt = cmd[:worktree]
+        label = wt.branch || wt.name
+        force_label = cmd[:force] ? " (force)" : ""
+
+        if model.repository.has_teardown_script?
+          # Teardown may be interactive — must suspend TUI
+          model.set_message("Deleting #{label}#{force_label}...")
+          tui.draw { |frame| View.draw(model, tui, frame) }
+
+          RatatuiRuby.restore_terminal
+          disable_mouse_tracking
+          puts "\e[H\e[2J"
+          puts "\e[1;36m🌊 Deleting #{label}#{force_label} 🌊\e[0m\n\n"
+          result = Update.handle(model, cmd)
+          RatatuiRuby.init_terminal
+          handle_command(result, model, tui, main_queue)
+        else
+          # No teardown — run inline with log pane
+          model.start_task_log("Deleting #{label}#{force_label}")
+          model.set_message("Deleting #{label}#{force_label}...")
+          model.start_background_activity
+
+          force = cmd[:force] || false
+          Thread.new do
+            main_queue << { type: :task_log_line, line: "Removing worktree #{wt.path}..." }
+
+            result = wt.delete!(force: force)
+
+            if result[:success]
+              if result[:warning]
+                main_queue << { type: :task_log_line, line: "Warning: #{result[:warning]}" }
+                main_queue << { type: :task_complete,
+                                result: nil,
+                                message: "Warning: #{result[:warning]}. Use 'D' to force delete." }
+              else
+                main_queue << { type: :task_log_line, line: "Done." }
+                main_queue << { type: :task_complete,
+                                result: { type: :refresh_list },
+                                message: "Deleted worktree #{label}." }
+              end
+            else
+              main_queue << { type: :task_log_line, line: "Error: #{result[:error]}" }
+              main_queue << { type: :task_complete,
+                              result: nil,
+                              message: "Error deleting: #{result[:error]}. Use 'D' to force delete." }
+            end
+          rescue StandardError => e
+            main_queue << { type: :task_log_line, line: "Error: #{e.message}" }
+            main_queue << { type: :task_complete, result: nil }
+          end
+        end
       when :create_worktree, :refresh_list
         result = Update.handle(model, cmd)
         handle_command(result, model, tui, main_queue)
@@ -122,10 +193,94 @@ module Wotr
         model.quit
       when :switch_worktree
         suspend_tui_and_switch(cmd[:worktree], model, tui)
+      when :acquire_resource
+        cfg = model.repository.config
+        repo_root = File.realpath(model.repository.root)
+        env = { 'WOTR_ROOT' => repo_root, 'WOTR_WORKTREE' => cmd[:worktree].path }
+        name = cmd[:name]
+        wt_label = cmd[:worktree].branch || cmd[:worktree].name
+        wt_path = cmd[:worktree].path
+        acquire_msg = "Acquiring #{name} for #{wt_label}..."
+        model.set_message(acquire_msg)
+        model.start_background_activity
+        Thread.new do
+          cfg.run_acquire_background(name, env: env, chdir: wt_path)
+          main_queue << { type: :trigger_resource_poll, message: "#{acquire_msg} done." }
+        rescue StandardError
+          main_queue << { type: :finish_background_activity }
+        end
       when :resume_worktree, :suspend_and_resume
         suspend_tui_and_run(cmd[:worktree], model, tui)
         Update.refresh_list(model)
         start_background_fetch(model, main_queue)
+      end
+    end
+
+    def self.start_resource_poll(model, main_queue)
+      model.mark_resource_poll_started
+      model.start_background_activity
+      model.set_message("Checking resource status...")
+
+      cfg = model.repository.config
+      if cfg.resource_names.empty?
+        model.finish_background_activity
+        model.set_message("Ready")
+        return
+      end
+
+      worktrees = model.worktrees.dup
+      repo_root = File.realpath(model.repository.root)
+      env_base = { "WOTR_ROOT" => repo_root }
+
+      Thread.new do
+        begin
+          icons_by_path = Hash.new { |h, k| h[k] = [] }
+
+          cfg.resource_names.each do |name|
+            icon = cfg.resource(name)&.fetch("icon", "•") || "•"
+
+            if cfg.exclusive?(name)
+              # Run per-worktree from its own dir; stop after finding the owner
+              worktrees.each do |wt|
+                env = env_base.merge("WOTR_WORKTREE" => wt.path)
+                result = cfg.run_inquire(name, env: env, chdir: wt.path)
+                next unless result[:ran] && result[:success]
+                next unless result[:data]["status"] == "owned"
+
+                owner = result[:data]["owner"]
+                if owner
+                  # Script returned explicit owner — map to the correct worktree
+                  owner_real = File.realpath(owner) rescue owner
+                  target = worktrees.find do |w|
+                    wt_real = File.realpath(w.path) rescue w.path
+                    owner_real == wt_real || owner_real.start_with?(wt_real + "/")
+                  end
+                  icons_by_path[target.path] << icon if target
+                else
+                  icons_by_path[wt.path] << icon
+                end
+                break
+              end
+            else
+              # Compatible — run per worktree
+              worktrees.each do |wt|
+                env = env_base.merge("WOTR_WORKTREE" => wt.path)
+                result = cfg.run_inquire(name, env: env, chdir: wt.path)
+                next unless result[:ran] && result[:success]
+                icons_by_path[wt.path] << icon if result[:data]["status"] == "compatible"
+              end
+            end
+          rescue StandardError
+            # Don't let one resource failure abort the rest
+          end
+
+          main_queue << {
+            type: :update_resource_icons,
+            icons_by_path: icons_by_path.transform_values(&:freeze)
+          }
+        rescue StandardError
+          main_queue << { type: :finish_background_activity }
+        end
       end
     end
 
@@ -164,8 +319,15 @@ module Wotr
       end
     end
 
+    def self.disable_mouse_tracking
+      # Disable SGR and X10 mouse tracking that ratatui enables
+      print "\e[?1000l\e[?1002l\e[?1003l\e[?1006l"
+      $stdout.flush
+    end
+
     def self.suspend_tui_and_switch(worktree, model, tui)
       RatatuiRuby.restore_terminal
+      disable_mouse_tracking
 
       puts "\e[H\e[2J" # Clear screen
 
@@ -205,6 +367,7 @@ module Wotr
 
     def self.suspend_tui_and_run(worktree, model, tui)
       RatatuiRuby.restore_terminal
+      disable_mouse_tracking
 
       puts "\e[H\e[2J" # Clear screen
 
@@ -226,9 +389,11 @@ module Wotr
       begin
         Dir.chdir(worktree.path) do
           if defined?(Bundler)
-            Bundler.with_unbundled_env { system("claude") }
+            Bundler.with_unbundled_env do
+              system("claude --continue", err: File::NULL) || system("claude")
+            end
           else
-            system("claude")
+            system("claude --continue", err: File::NULL) || system("claude")
           end
         end
         # Track last resumed worktree for exit

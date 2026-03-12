@@ -20,10 +20,10 @@ Gem::Specification.new do |spec|
 
   # Specify which files should be added to the gem when it is released.
   spec.files = Dir.chdir(__dir__) do
-    Dir["{exe,lib,sig}/**/*", "README.md", "LICENSE.txt", "CHANGELOG.md", "CODE_OF_CONDUCT.md"]
+    Dir["{data,exe,lib,sig}/**/*", "README.md", "LICENSE.txt", "CHANGELOG.md", "CODE_OF_CONDUCT.md"]
   end
   spec.bindir = 'exe'
-  spec.executables = ['wotr']
+  spec.executables = ['wotr', 'wotr-output']
   spec.require_paths = ['lib']
 
   spec.add_dependency 'git'

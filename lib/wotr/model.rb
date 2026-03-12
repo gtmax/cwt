@@ -2,20 +2,79 @@
 
 module Wotr
   class Model
-    attr_reader :repository, :selection_index, :mode, :input_buffer, :message, :running, :fetch_generation, :filter_query
-    attr_accessor :resume_to  # Worktree object or nil
+    RESOURCE_POLL_INTERVAL = 60 # seconds
+
+    SHORTCUTS = {
+      normal: [
+        { key: 'n',     desc: 'New'    },
+        { key: '/',     desc: 'Filter' },
+        { key: 'Enter', desc: 'Resume' },
+        { key: 's',     desc: 'Shell'  },
+        { key: 'd',     desc: 'Delete' },
+        { key: 'Esc',   desc: 'Quit'   }
+      ].freeze,
+      creating: [
+        { key: 'Enter', desc: 'Confirm' },
+        { key: 'Esc',   desc: 'Cancel'  }
+      ].freeze,
+      filtering: [
+        { key: 'Type',  desc: 'Search' },
+        { key: 'Enter', desc: 'Resume' },
+        { key: 'Esc',   desc: 'Reset'  }
+      ].freeze
+    }.freeze
+
+    # Navigation keys not shown in footer but still reserved for resource shortcuts
+    NAV_KEYS = %w[q j k].freeze
+
+    RESERVED_KEYS = (
+      SHORTCUTS[:normal].map { |s| s[:key] } + NAV_KEYS
+    ).select { |k| k.length == 1 && k =~ /[a-z]/ }.uniq.freeze
+
+    LOG_PANE_MAX_LINES = 200
+
+    attr_reader :repository, :selection_index, :mode, :input_buffer, :message,
+                :running, :fetch_generation, :filter_query,
+                :task_log, :task_label
+    attr_accessor :resume_to, :mouse_areas
+    attr_writer :selection_index
 
     def initialize(repository)
       @repository = repository
       @worktrees_cache = []
       @selection_index = 0
-      @mode = :normal # :normal, :creating, :filtering
+      @mode = :normal
       @input_buffer = String.new
       @filter_query = String.new
-      @message = "Welcome to Wotr"
+      @message = ""
       @running = true
       @fetch_generation = 0
       @resume_to = nil
+      @mouse_areas = {}
+      @resource_icons = {}     # { "/path/to/worktree" => ["🌐", "🤖"] }
+      @last_resource_poll = nil
+      @background_activity = 0
+      @task_log = []
+      @task_label = nil
+    end
+
+    def start_task_log(label)
+      @task_label = label
+      @task_log = []
+    end
+
+    def append_task_log(line)
+      @task_log << line
+      @task_log.shift if @task_log.size > LOG_PANE_MAX_LINES
+    end
+
+    def clear_task_log
+      @task_log = []
+      @task_label = nil
+    end
+
+    def task_running?
+      !@task_label.nil?
     end
 
     def worktrees
@@ -34,7 +93,6 @@ module Wotr
     end
 
     def find_worktree_by_path(path)
-      # Normalize path for comparison (handles macOS /var -> /private/var symlinks)
       normalized = begin
         File.realpath(path)
       rescue Errno::ENOENT
@@ -74,7 +132,6 @@ module Wotr
         @message = "Enter session name: "
       elsif mode == :filtering
         @message = "Filter: "
-        # We don't clear filter query here, we assume user wants to edit it
       else
         @message = "Ready"
       end
@@ -82,7 +139,7 @@ module Wotr
 
     def set_filter(query)
       @filter_query = query
-      @selection_index = 0 # Reset selection on filter change
+      @selection_index = 0
     end
 
     def input_append(char)
@@ -113,6 +170,57 @@ module Wotr
 
     def quit
       @running = false
+    end
+
+    def current_shortcuts
+      SHORTCUTS[mode] || SHORTCUTS[:normal]
+    end
+
+    # Resource icons
+
+    def resource_shortcuts
+      @resource_shortcuts ||= begin
+        taken = RESERVED_KEYS.dup
+        @repository.config.resource_names.each_with_object({}) do |name, result|
+          letter = name.chars.find { |c| c =~ /[a-z]/ && !taken.include?(c) }
+          next unless letter
+          result[letter] = name
+          taken << letter
+        end
+      end
+    end
+
+    def has_resources?
+      @repository.config.resource_names.any?
+    end
+
+    def resource_icons_for(path)
+      @resource_icons[path] || []
+    end
+
+    def update_resource_icons(by_path)
+      @resource_icons = by_path
+    end
+
+    def start_background_activity
+      @background_activity += 1
+    end
+
+    def finish_background_activity
+      @background_activity = [@background_activity - 1, 0].max
+    end
+
+    def background_activity?
+      @background_activity > 0
+    end
+
+    def resource_poll_due?
+      @last_resource_poll.nil? ||
+        (Time.now - @last_resource_poll) >= RESOURCE_POLL_INTERVAL
+    end
+
+    def mark_resource_poll_started
+      @last_resource_poll = Time.now
     end
 
     private

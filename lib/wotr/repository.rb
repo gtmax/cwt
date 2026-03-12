@@ -2,6 +2,7 @@
 
 require 'git'
 require 'fileutils'
+require_relative 'config'
 
 module Wotr
   class Repository
@@ -42,24 +43,12 @@ module Wotr
       File.join(Dir.home, '.wotr')
     end
 
-    def setup_script_path
-      File.join(config_dir, "setup")
-    end
-
     def user_setup_script_path
       File.join(user_config_dir, "setup")
     end
 
     def teardown_script_path
       File.join(config_dir, "teardown")
-    end
-
-    def switch_script_path
-      File.join(config_dir, "switch")
-    end
-
-    def has_setup_script?
-      File.exist?(setup_script_path) && File.executable?(setup_script_path)
     end
 
     def has_user_setup_script?
@@ -70,8 +59,8 @@ module Wotr
       File.exist?(teardown_script_path) && File.executable?(teardown_script_path)
     end
 
-    def has_switch_script?
-      File.exist?(switch_script_path) && File.executable?(switch_script_path)
+    def config
+      @config ||= Config.load(@root)
     end
 
     # Returns Array<Worktree>

@@ -41,38 +41,35 @@ module Wotr
       File.delete(setup_marker_path) if File.exist?(setup_marker_path)
     end
 
-    # Run setup scripts or default symlinks.
+    # Run setup hooks for a new worktree.
     # Execution order:
-    #   1. ~/.wotr/setup  (user-level, if exists)
-    #   2. .wotr/setup    (repo-level, if exists)
-    #   3. defaults      (only if neither script exists)
+    #   1. ~/.wotr/setup      (user-level, always runs if exists)
+    #   2. .wotr/config new   (repo-level config hook, if defined)
+    #   3. default symlinks   (if neither of the above ran)
     # Scripts can call `wotr-default-setup` to opt into default behaviour explicitly.
     def run_setup!(visible: true)
-      has_user = @repository.has_user_setup_script?
-      has_repo = @repository.has_setup_script?
-
       puts "\e[1;36m🌊 Setting up new worktree 🌊\e[0m\n\n" if visible
 
-      if has_user || has_repo
-        run_hook(@repository.user_setup_script_path, label: "~/.wotr/setup", visible: visible) if has_user
-        run_hook(@repository.setup_script_path, label: ".wotr/setup", visible: visible) if has_repo
-      else
+      ran_user = @repository.has_user_setup_script?
+      run_hook(@repository.user_setup_script_path, label: "~/.wotr/setup", visible: visible) if ran_user
+
+      env = { "WOTR_ROOT" => File.realpath(@repository.root), "WOTR_WORKTREE" => @path }
+      cfg_hook = @repository.config.hook("new")
+
+      if cfg_hook
+        @repository.config.run_hook("new", env: env, chdir: @path, visible: visible)
+      elsif !ran_user
         setup_default_symlinks
       end
     end
 
-    # Run switch script if it exists (fires on every worktree jump)
+    # Run the switch hook (fires on every worktree jump)
     # Returns { ran: Boolean, success: Boolean }
     def run_switch!
-      return { ran: false } unless @repository.has_switch_script?
+      return { ran: false } unless @repository.config.hook("switch")
 
-      success = system(
-        { "WOTR_ROOT" => File.realpath(@repository.root), "WOTR_WORKTREE" => @path },
-        @repository.switch_script_path,
-        chdir: @path
-      )
-
-      { ran: true, success: success }
+      env = { "WOTR_ROOT" => File.realpath(@repository.root), "WOTR_WORKTREE" => @path }
+      @repository.config.run_hook("switch", env: env, chdir: @path, visible: true)
     end
 
     # Run teardown script if it exists

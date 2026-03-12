@@ -6,6 +6,15 @@ if RUBY_VERSION < "3.2.0"
   exit 1
 end
 
-require_relative '../lib/wotr/app'
-
-Wotr::App.run
+if ARGV.empty?
+  require_relative '../lib/wotr/app'
+  Wotr::App.run
+else
+  require_relative '../lib/wotr/version'
+  require_relative '../lib/wotr/git'
+  require_relative '../lib/wotr/repository'
+  require_relative '../lib/wotr/worktree'
+  require_relative '../lib/wotr/config'
+  require_relative '../lib/wotr/cli'
+  Wotr::CLI.run(ARGV)
+end

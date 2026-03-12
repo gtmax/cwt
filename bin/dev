@@ -63,14 +63,23 @@ case "$COMMAND" in
       ln -sf "$GEM_BIN/wotr" "/opt/homebrew/bin/wotr"
       echo "Symlinked wotr → /opt/homebrew/bin/wotr"
     fi
-    # Copy wotr-default-setup (bash script) directly — not via RubyGems wrapper
+    # Symlink Ruby-based executables and copy shell scripts into /opt/homebrew/bin
     GEM_DIR=$("$GEM" environment gemdir)
-    WOTR_DEFAULT_SETUP=$(ls "$GEM_DIR/gems/wotr-"*/exe/wotr-default-setup 2>/dev/null | tail -1)
-    if [ -n "$WOTR_DEFAULT_SETUP" ] && [ -d "/opt/homebrew/bin" ]; then
-      cp "$WOTR_DEFAULT_SETUP" "/opt/homebrew/bin/wotr-default-setup"
-      chmod +x "/opt/homebrew/bin/wotr-default-setup"
-      echo "Installed wotr-default-setup → /opt/homebrew/bin/wotr-default-setup"
-    fi
+    GEM_BIN_INSTALLED=$("$GEM" environment | awk '/EXECUTABLE DIRECTORY/ {print $NF}')
+    for script in wotr-default-setup; do
+      SRC=$(ls "$GEM_DIR/gems/wotr-"*/exe/$script 2>/dev/null | tail -1)
+      if [ -n "$SRC" ] && [ -d "/opt/homebrew/bin" ]; then
+        cp "$SRC" "/opt/homebrew/bin/$script"
+        chmod +x "/opt/homebrew/bin/$script"
+        echo "Installed $script → /opt/homebrew/bin/$script"
+      fi
+    done
+    for script in wotr-output; do
+      if [ -f "$GEM_BIN_INSTALLED/$script" ] && [ -d "/opt/homebrew/bin" ]; then
+        ln -sf "$GEM_BIN_INSTALLED/$script" "/opt/homebrew/bin/$script"
+        echo "Symlinked $script → /opt/homebrew/bin/$script"
+      fi
+    done
     # Create ~/.wotr/setup template if it doesn't exist yet
     if [ ! -f "$HOME/.wotr/setup" ]; then
       mkdir -p "$HOME/.wotr"

@@ -1,0 +1,260 @@
+# Resource Patterns Library
+
+Reusable patterns for common resource types. Adapt to the specific project.
+
+---
+
+## Port-Based Server (Exclusive)
+
+For any service bound to a specific TCP port (dev servers, API servers, etc.).
+
+```yaml
+web-server:
+  icon: 💻
+  exclusive: true
+  description: Dev server (port 3000)
+  acquire: |
+    npm run dev
+  inquire: |
+    pid=$(lsof -ti :3000 -sTCP:LISTEN 2>/dev/null | head -1)
+    if [ -z "$pid" ]; then
+      wotr-output status=unowned
+      exit 0
+    fi
+    cwd=$(lsof -p "$pid" -a -d cwd -Fn 2>/dev/null | grep '^n' | sed 's/^n//')
+    root="$cwd"
+    while [ "$root" != "/" ] && [ ! -e "$root/.git" ]; do
+      root=$(dirname "$root")
+    done
+    wotr-output status=owned owner="$root"
+```
+
+**Adapt**: Change port number, start command, icon.
+
+**Variants**:
+- Multiple ports: Check each, all must belong to same worktree
+- Background process: Use `bin/dev start` style wrapper that backgrounds and logs
+
+---
+
+## Docker Compose Service (Exclusive)
+
+For services running via Docker Compose.
+
+```yaml
+agents:
+  icon: 🤖
+  exclusive: true
+  description: AI agent containers
+  acquire: |
+    docker compose up -d service-name
+  inquire: |
+    container=$(docker ps --filter health=healthy --format '{{.Names}}' 2>/dev/null \
+      | grep -E "\-service-name-[0-9]+$" \
+      | sed 's/-service-name-[0-9]*$//' \
+      | head -1)
+    if [ -z "$container" ]; then
+      wotr-output status=unowned
+      exit 0
+    fi
+    repo_name=$(basename "$WOTR_ROOT")
+    if [ "$container" = "$repo_name" ]; then
+      wotr-output status=owned owner="$WOTR_ROOT"
+    else
+      wotr-output status=owned owner="$(dirname "$WOTR_ROOT")/.worktrees/$repo_name/$container"
+    fi
+```
+
+**Key**: Use `--filter health=healthy` not `--filter status=running` to exclude crash-looping containers. Docker Compose project name defaults to the directory name, which maps to the worktree.
+
+---
+
+## Database Schema / Migrations (Compatible)
+
+For databases shared across worktrees where each worktree has its own migration files.
+
+```yaml
+db-schema:
+  icon: 💾
+  exclusive: false
+  description: Database migrations applied
+  acquire: |
+    bin/dev db:migrate
+  inquire: |
+    output=$(cd "$WOTR_WORKTREE/path/to/migrations" && migration-check-command 2>&1)
+    pending=$(echo "$output" | grep -c 'pending')
+    if [ "$pending" -gt 0 ]; then
+      wotr-output status=incompatible reason="${pending} pending migrations"
+    else
+      wotr-output status=compatible
+    fi
+```
+
+**Supabase variant**:
+```yaml
+  inquire: |
+    output=$(cd "$WOTR_WORKTREE/apps/web" && supabase migration list --local 2>&1)
+    pending=$(echo "$output" | awk '/\|/ {
+      split($0, a, "|")
+      gsub(/[[:space:]]/, "", a[1])
+      gsub(/[[:space:]]/, "", a[2])
+      if (a[1] ~ /^[0-9]+$/ && a[2] == "") print a[1]
+    }')
+    if [ -n "$pending" ]; then
+      count=$(echo "$pending" | wc -l | tr -d ' ')
+      wotr-output status=incompatible reason="${count} pending migrations"
+    else
+      wotr-output status=compatible
+    fi
+```
+
+**Rails variant**:
+```yaml
+  inquire: |
+    cd "$WOTR_WORKTREE"
+    pending=$(bundle exec rails db:migrate:status 2>/dev/null | grep -c '^\s*down')
+    if [ "$pending" -gt 0 ]; then
+      wotr-output status=incompatible reason="${pending} pending migrations"
+    else
+      wotr-output status=compatible
+    fi
+```
+
+---
+
+## Redis / Memcached (Exclusive)
+
+For cache services bound to a port.
+
+```yaml
+cache:
+  icon: ⚡
+  exclusive: true
+  description: Redis (port 6379)
+  acquire: |
+    redis-server --daemonize yes
+  inquire: |
+    pid=$(lsof -ti :6379 -sTCP:LISTEN 2>/dev/null | head -1)
+    if [ -z "$pid" ]; then
+      wotr-output status=unowned
+      exit 0
+    fi
+    # Redis is typically shared — report as owned by whoever started it
+    cwd=$(lsof -p "$pid" -a -d cwd -Fn 2>/dev/null | grep '^n' | sed 's/^n//')
+    root="$cwd"
+    while [ "$root" != "/" ] && [ ! -e "$root/.git" ]; do
+      root=$(dirname "$root")
+    done
+    wotr-output status=owned owner="$root"
+```
+
+---
+
+## File Lock / PID File (Exclusive)
+
+For resources tracked by a lock file or PID file.
+
+```yaml
+build-lock:
+  icon: 🔧
+  exclusive: true
+  description: Build system lock
+  acquire: |
+    echo "$WOTR_WORKTREE" > .wotr/build.lock
+    make build
+  inquire: |
+    lock=".wotr/build.lock"
+    if [ ! -f "$WOTR_ROOT/$lock" ]; then
+      wotr-output status=unowned
+      exit 0
+    fi
+    owner=$(cat "$WOTR_ROOT/$lock")
+    wotr-output status=owned owner="$owner"
+```
+
+---
+
+## Environment File Sync (Compatible)
+
+For checking if environment files are in sync.
+
+```yaml
+env-sync:
+  icon: 🔑
+  exclusive: false
+  description: Environment files synced
+  acquire: |
+    cp "$WOTR_ROOT/.env.example" "$WOTR_WORKTREE/.env"
+  inquire: |
+    if [ ! -f "$WOTR_WORKTREE/.env" ]; then
+      wotr-output status=incompatible reason="missing .env"
+    else
+      wotr-output status=compatible
+    fi
+```
+
+---
+
+## Hook Patterns
+
+### Node.js / pnpm
+
+```yaml
+hooks:
+  new: |
+    wotr-default-setup
+    pnpm install --frozen-lockfile
+  switch: |
+    # Restart dev server pointing at this worktree
+    pnpm dev
+```
+
+### Python / Poetry
+
+```yaml
+hooks:
+  new: |
+    wotr-default-setup
+    poetry install
+  switch: |
+    poetry run python manage.py runserver
+```
+
+### Ruby / Bundler
+
+```yaml
+hooks:
+  new: |
+    wotr-default-setup
+    bundle install
+  switch: |
+    bundle exec rails server
+```
+
+### Symlink Pattern for Shared Files
+
+```yaml
+hooks:
+  new: |
+    wotr-default-setup
+
+    # Symlink shared env files
+    for file in .env.development.local .env.test.local; do
+      src="$WOTR_ROOT/$file"
+      dst="$file"
+      if [ -f "$src" ] && [ ! -e "$dst" ]; then
+        ln -sf "$src" "$dst"
+        echo "  Symlinked $dst"
+      fi
+    done
+
+    # Copy files that must be real (e.g., Docker-mounted)
+    for file in .docker.env; do
+      src="$WOTR_ROOT/$file"
+      dst="$file"
+      if [ -f "$src" ] && [ ! -e "$dst" ]; then
+        cp "$src" "$dst"
+        echo "  Copied $dst"
+      fi
+    done
+```
