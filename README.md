@@ -12,7 +12,7 @@ The goal of this tool is to be as unimposing as possible. We don't want to chang
 
 ## How it works
 
-When you use `wotr`, you are just running a TUI (Terminal User Interface) to manage folders.
+The core of wotr is a minimal worktree manager — a TUI that creates, lists, and deletes git worktrees. On its own it does very little. The real power comes from the scripts you wire into it via `.wotr/config`: lifecycle hooks that run when worktrees are created or switched to, actions that bind keys to arbitrary commands, and resources that manage shared services across worktrees. wotr is the engine; your config is the logic.
 
 1.  **It's just Git:** Under the hood, we are just creating standard Git worktrees.
 2.  **Native Environment:** When you enter a session, `wotr` suspends itself and launches a native instance of `claude` (or your preferred shell) directly in that directory.
@@ -22,9 +22,10 @@ When you use `wotr`, you are just running a TUI (Terminal User Interface) to man
 
 *   **Fast Management:** Create, switch, and delete worktrees instantly.
 *   **Safety Net:** wotr checks for unmerged changes before you delete a session, so you don't accidentally lose work.
+*   **Session Persistence:** Claude conversations are tied to worktree paths, so they survive restarts. Reboot your machine, re-enter a worktree, and your conversation picks up right where you left off.
 *   **Auto-Setup:** Symlinks your `.env` and `node_modules` out of the box via `wotr-default-setup`. Customize with `.wotr/config`.
 *   **Custom Actions:** Define keybindings that launch editors, run tests, or any command against a worktree.
-*   **Shared Resources:** Track exclusive resources (dev servers, databases, Docker containers) across worktrees.
+*   **Shared Resources:** Local dev is resource-constrained — you can't run a separate web server, database, and Docker stack for every worktree. wotr lets you define exclusive resources and switch them between worktrees with a single keypress, so the right branch always owns the right services.
 
 ## Installation
 
@@ -41,6 +42,13 @@ wotr update
 ## Configuration
 
 Create `.wotr/config` in your repo root (or run `wotr init`):
+
+### Hooks
+
+Two lifecycle hooks run at key moments:
+
+*   **`new`** — runs once when a worktree is first created. Use it to install dependencies, symlink config files, or anything else needed to make the worktree functional. wotr ships a built-in helper, `wotr-default-setup`, which symlinks your `.claude/` directory (so Claude Code settings, skills, and CLAUDE.md carry over) while keeping `settings.local.json` as an isolated copy. Call it from your hook and add project-specific steps after it.
+*   **`switch`** — runs every time you switch context to a worktree. Typically used to stop services owned by the previous worktree and start them for the new one.
 
 ```yaml
 hooks:
