@@ -12,8 +12,10 @@ set -e
 
 REPO="gtmax/wotr"
 REQUIRED_RUBY="3.2.0"
-BREW_RUBY="/opt/homebrew/opt/ruby/bin/ruby"
-BREW_GEM="/opt/homebrew/opt/ruby/bin/gem"
+# Homebrew prefix: /opt/homebrew on Apple Silicon, /usr/local on Intel
+BREW_PREFIX="$(brew --prefix 2>/dev/null || echo /opt/homebrew)"
+BREW_RUBY="$BREW_PREFIX/opt/ruby/bin/ruby"
+BREW_GEM="$BREW_PREFIX/opt/ruby/bin/gem"
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -61,9 +63,9 @@ ensure_ruby() {
 symlink_bin() {
   local bin="$1"
   local gem_bin="$2"
-  if [ -f "$gem_bin/$bin" ] && [ -d "/opt/homebrew/bin" ]; then
-    ln -sf "$gem_bin/$bin" "/opt/homebrew/bin/$bin"
-    echo "  Symlinked $bin → /opt/homebrew/bin/$bin"
+  if [ -f "$gem_bin/$bin" ] && [ -d "$BREW_PREFIX/bin" ]; then
+    ln -sf "$gem_bin/$bin" "$BREW_PREFIX/bin/$bin"
+    echo "  Symlinked $bin → $BREW_PREFIX/bin/$bin"
   fi
 }
 
@@ -131,10 +133,10 @@ symlink_bin "wotr" "$GEM_BIN"
 GEM_DIR=$("$GEM" environment gemdir)
 for script in wotr-default-setup wotr-output; do
   SRC=$(ls "$GEM_DIR/gems/wotr-"*/exe/$script 2>/dev/null | tail -1)
-  if [ -n "$SRC" ] && [ -d "/opt/homebrew/bin" ]; then
-    cp "$SRC" "/opt/homebrew/bin/$script"
-    chmod +x "/opt/homebrew/bin/$script"
-    echo "  Installed $script → /opt/homebrew/bin/$script"
+  if [ -n "$SRC" ] && [ -d "$BREW_PREFIX/bin" ]; then
+    cp "$SRC" "$BREW_PREFIX/bin/$script"
+    chmod +x "$BREW_PREFIX/bin/$script"
+    echo "  Installed $script → $BREW_PREFIX/bin/$script"
   fi
 done
 echo
