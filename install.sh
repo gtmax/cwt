@@ -132,6 +132,29 @@ else
 fi
 
 echo "Installing gem..."
+# ratatui_ruby has prebuilt binaries for arm64-darwin but not x86_64-darwin.
+# On Intel Macs, pre-install ratatui_ruby from source (requires Rust).
+ARCH=$(uname -m)
+if [ "$ARCH" = "x86_64" ]; then
+  if ! command -v cargo >/dev/null 2>&1; then
+    echo "wotr needs Rust to compile a native dependency on Intel Macs."
+    if command -v brew >/dev/null 2>&1; then
+      printf "Install Rust via Homebrew? [Y/n] "
+      read -r REPLY </dev/tty 2>/dev/null || REPLY=""
+      if [[ ! "$REPLY" =~ ^[Nn]$ ]]; then
+        brew install rust
+      else
+        echo "Aborted."
+        exit 1
+      fi
+    else
+      echo "Please install Rust: https://rustup.rs"
+      exit 1
+    fi
+  fi
+  echo "Compiling ratatui_ruby from source (this may take a minute)..."
+  "$GEM" install ratatui_ruby --platform ruby
+fi
 "$GEM" install --force "$GEM_FILE"
 echo
 
