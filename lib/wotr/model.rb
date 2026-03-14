@@ -178,9 +178,26 @@ module Wotr
 
     # Resource icons
 
+    def action_shortcuts
+      @action_shortcuts ||= begin
+        taken = RESERVED_KEYS.dup
+        @repository.config.action_names.each_with_object({}) do |name, result|
+          cfg = @repository.config.action(name)
+          key = cfg&.fetch("key", nil)
+          next unless key && key.length == 1 && key =~ /[a-z]/ && !taken.include?(key)
+          result[key] = name
+          taken << key
+        end
+      end
+    end
+
+    def has_actions?
+      @repository.config.action_names.any?
+    end
+
     def resource_shortcuts
       @resource_shortcuts ||= begin
-        taken = RESERVED_KEYS.dup
+        taken = RESERVED_KEYS.dup + action_shortcuts.keys
         @repository.config.resource_names.each_with_object({}) do |name, result|
           letter = name.chars.find { |c| c =~ /[a-z]/ && !taken.include?(c) }
           next unless letter

@@ -25,7 +25,8 @@ module Wotr
       app_width = [frame.area.width, 100].min
       msg_lines = wrap_text(model.message, app_width - 2).size
       legend_height = model.has_resources? ? 1 : 0
-      footer_height = 1 + legend_height + 1 + 1 + 1 + msg_lines  # keys line + legend + blank + dirty + status border + message lines
+      actions_height = model.has_actions? ? 1 : 0
+      footer_height = 1 + actions_height + legend_height + 1 + 1 + 1 + msg_lines  # keys + actions + legend + blank + dirty + status border + msg
 
       show_log = model.task_running?
       log_height = show_log ? LOG_PANE_HEIGHT : 0
@@ -209,6 +210,15 @@ module Wotr
 
       text = [tui.text_line(spans: [indent] + keys)]
 
+      if model.has_actions?
+        action_spans = [indent]
+        model.action_shortcuts.each do |key, name|
+          action_spans << tui.text_span(content: " #{key} ", style: tui.style(bg: :dark_gray, fg: :white))
+          action_spans << tui.text_span(content: " #{name} ", style: tui.style(**THEME[:dim]))
+        end
+        text = text + [tui.text_line(spans: action_spans)]
+      end
+
       if model.has_resources?
         legend_spans = [indent]
         shortcuts = model.resource_shortcuts
@@ -266,7 +276,7 @@ module Wotr
       top_char = SPINNER[n % SPINNER.length]
       bot_char = SPINNER[(n + SPINNER.length / 2) % SPINNER.length]
 
-      sy = area.y + 1  # past border, aligned with keys line
+      sy = area.y  # no border, aligned with keys line
       sx = area.x + area.width - 2      # one col from the right edge
 
       spinner_widget = tui.paragraph(
@@ -352,10 +362,10 @@ module Wotr
       list_left   = list_area.x
       list_right  = list_area.x + list_area.width - 1
 
-      # Footer: top border at footer_area.y, content starts at y+1
-      # Layout: [key line] [legend line?] [blank] [msg_lines] [dirty]
-      key_y    = footer_area.y + 1
-      legend_y = key_y + 1
+      # Footer: no border, content starts at y
+      # Layout: [key line] [actions line?] [legend line?] [blank] [dirty] [status border + msg]
+      key_y    = footer_area.y
+      current_y = key_y + 1
 
       # Key shortcut buttons — ASCII only, so .length is accurate
       # +1 for the indent space prepended to the keys line
@@ -367,11 +377,26 @@ module Wotr
         btn
       end
 
+      # Action buttons
+      action_y = model.has_actions? ? current_y : nil
+      action_buttons = []
+      if model.has_actions?
+        x = footer_area.x + 1
+        model.action_shortcuts.each do |key, name|
+          kw = key.length + 2
+          dw = name.length + 2
+          action_buttons << { x_start: x, x_end: x + kw + dw - 1, action: name }
+          x += kw + dw
+        end
+        current_y += 1
+      end
+
       # Resource legend buttons — use _text_width for emoji
       # +1 for the indent space prepended to the legend line
-      x = footer_area.x + 1
+      legend_y = model.has_resources? ? current_y : nil
       legend_buttons = []
       if model.has_resources?
+        x = footer_area.x + 1
         shortcuts = model.resource_shortcuts
         model.repository.config.resource_names.each do |name|
           icon = model.repository.config.resource(name)&.fetch('icon', '•') || '•'
@@ -391,6 +416,7 @@ module Wotr
         list_top: list_top, list_bottom: list_bottom,
         list_left: list_left, list_right: list_right,
         key_y: key_y, key_buttons: key_buttons,
+        action_y: action_y, action_buttons: action_buttons,
         legend_y: legend_y, legend_buttons: legend_buttons
       }
     end

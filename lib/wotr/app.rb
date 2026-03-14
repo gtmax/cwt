@@ -209,10 +209,79 @@ module Wotr
         rescue StandardError
           main_queue << { type: :finish_background_activity }
         end
+      when :run_action
+        run_action(cmd[:name], cmd[:worktree], model, tui, main_queue)
       when :resume_worktree, :suspend_and_resume
         suspend_tui_and_run(cmd[:worktree], model, tui)
         Update.refresh_list(model)
         start_background_fetch(model, main_queue)
+      end
+    end
+
+    def self.run_action(name, worktree, model, tui, main_queue)
+      cfg = model.repository.config
+      action = cfg.action(name)
+      return unless action
+
+      repo_root = File.realpath(model.repository.root)
+      env = { 'WOTR_ROOT' => repo_root, 'WOTR_WORKTREE' => worktree.path }
+      wt_label = worktree.branch || worktree.name
+      switch_to_script = action["switch_to"]
+      run_script = action["run"]
+
+      if switch_to_script
+        # Suspend TUI and switch to the command
+        RatatuiRuby.restore_terminal
+        disable_mouse_tracking
+        puts "\e[H\e[2J"
+
+        if run_script
+          puts "\e[1;36m🌊 #{name}: preparing... 🌊\e[0m\n\n"
+          cfg.send(:run_script_visible, run_script, env: env, chdir: worktree.path)
+          puts
+        end
+
+        begin
+          Dir.chdir(worktree.path) do
+            if defined?(Bundler)
+              Bundler.with_unbundled_env { system(env, "/bin/bash", "-c", switch_to_script) }
+            else
+              system(env, "/bin/bash", "-c", switch_to_script)
+            end
+          end
+        rescue StandardError => e
+          puts "Error: #{e.message}"
+          print "Press Enter to return..."
+          STDIN.gets rescue nil
+        ensure
+          RatatuiRuby.init_terminal
+        end
+
+        Update.refresh_list(model)
+        start_background_fetch(model, main_queue)
+      elsif run_script
+        # Run in background with log pane
+        model.start_task_log("#{name} (#{wt_label})")
+        model.set_message("Running #{name}...")
+        model.start_background_activity
+
+        Thread.new do
+          cfg.send(:write_tmpscript, "#!/usr/bin/env bash\n#{run_script}") do |path|
+            IO.popen(env.merge("WOTR_LOG" => cfg.log_path || "/dev/null"),
+                     [path], chdir: worktree.path, err: [:child, :out]) do |io|
+              io.each_line { |line| main_queue << { type: :task_log_line, line: line.chomp } }
+            end
+          end
+
+          if $?.success?
+            main_queue << { type: :task_complete, message: "#{name} completed." }
+          else
+            main_queue << { type: :task_complete, message: "#{name} failed (exit #{$?.exitstatus})." }
+          end
+        rescue StandardError => e
+          main_queue << { type: :task_log_line, line: "Error: #{e.message}" }
+          main_queue << { type: :task_complete, result: nil }
+        end
       end
     end
 
@@ -282,6 +351,19 @@ module Wotr
           main_queue << { type: :finish_background_activity }
         end
       end
+    end
+
+    def self.can_continue_claude?
+      # Claude stores conversations in ~/.claude/projects/<encoded-path>/
+      # where the path has / replaced with -
+      encoded = Dir.pwd.gsub("/", "-")
+      project_dir = File.expand_path("~/.claude/projects/#{encoded}")
+      return false unless Dir.exist?(project_dir)
+
+      # Check for any conversation files
+      Dir.glob(File.join(project_dir, "*.jsonl")).any?
+    rescue StandardError
+      false
     end
 
     def self.start_background_fetch(model, main_queue)
@@ -388,12 +470,11 @@ module Wotr
       puts "Launching claude in #{worktree.path}..."
       begin
         Dir.chdir(worktree.path) do
+          claude_cmd = can_continue_claude? ? "claude --continue" : "claude"
           if defined?(Bundler)
-            Bundler.with_unbundled_env do
-              system("claude --continue", err: File::NULL) || system("claude")
-            end
+            Bundler.with_unbundled_env { system(claude_cmd) }
           else
-            system("claude --continue", err: File::NULL) || system("claude")
+            system(claude_cmd)
           end
         end
         # Track last resumed worktree for exit

@@ -118,14 +118,16 @@ echo
 # 3. Install binaries onto PATH
 GEM_BIN=$("$GEM" environment | awk '/EXECUTABLE DIRECTORY/ {print $NF}')
 symlink_bin "wotr" "$GEM_BIN"
-# wotr-default-setup is a bash script — copy directly so the shell runs it, not RubyGems
+# Helper scripts are bash/ruby — copy directly so the shell runs them, not RubyGems
 GEM_DIR=$("$GEM" environment gemdir)
-WOTR_DEFAULTS=$(ls "$GEM_DIR/gems/wotr-"*/exe/wotr-default-setup 2>/dev/null | tail -1)
-if [ -n "$WOTR_DEFAULTS" ] && [ -d "/opt/homebrew/bin" ]; then
-  cp "$WOTR_DEFAULTS" "/opt/homebrew/bin/wotr-default-setup"
-  chmod +x "/opt/homebrew/bin/wotr-default-setup"
-  echo "  Installed wotr-default-setup → /opt/homebrew/bin/wotr-default-setup"
-fi
+for script in wotr-default-setup wotr-output; do
+  SRC=$(ls "$GEM_DIR/gems/wotr-"*/exe/$script 2>/dev/null | tail -1)
+  if [ -n "$SRC" ] && [ -d "/opt/homebrew/bin" ]; then
+    cp "$SRC" "/opt/homebrew/bin/$script"
+    chmod +x "/opt/homebrew/bin/$script"
+    echo "  Installed $script → /opt/homebrew/bin/$script"
+  fi
+done
 echo
 
 # 4. User setup template

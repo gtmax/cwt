@@ -109,9 +109,13 @@ module Wotr
       # Ensure parent directories exist (e.g. .worktrees/feat/ for feat/my-feature)
       FileUtils.mkdir_p(File.dirname(path))
 
-      # Create worktree — reuse existing branch if it exists, otherwise create new
+      # Create worktree — reuse existing branch, track remote, or create new
       if branch_exists?(safe_name)
         @git.lib.worktree_add(path, safe_name)
+      elsif remote_branch_exists?(safe_name)
+        # Create local branch tracking the remote branch
+        @git.lib.send(:worktree_command,
+          'worktree', 'add', '--track', '-b', safe_name, path, "origin/#{safe_name}")
       else
         args = ['worktree', 'add', '-b', safe_name, path]
         base_branch = ENV["WOTR_START_POINT"]
@@ -140,6 +144,15 @@ module Wotr
 
     def branch_exists?(name)
       @git.lib.rev_parse("refs/heads/#{name}")
+      true
+    rescue ::Git::Error
+      false
+    end
+
+    def remote_branch_exists?(name)
+      # Fetch latest refs so we don't miss recently pushed branches
+      @git.lib.send(:command, 'fetch', '--quiet', 'origin')
+      @git.lib.rev_parse("refs/remotes/origin/#{name}")
       true
     rescue ::Git::Error
       false

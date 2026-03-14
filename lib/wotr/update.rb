@@ -130,6 +130,9 @@ module Wotr
         elsif (resource_name = model.resource_shortcuts[event.to_s])
           wt = model.selected_worktree
           return { type: :acquire_resource, name: resource_name, worktree: wt } if wt
+        elsif (action_name = model.action_shortcuts[event.to_s])
+          wt = model.selected_worktree
+          return { type: :run_action, name: action_name, worktree: wt } if wt
         end
       end
       nil
@@ -176,8 +179,17 @@ module Wotr
         end
       end
 
+      # Action button click
+      if areas[:action_y] && y == areas[:action_y] && model.has_actions?
+        areas[:action_buttons].each do |btn|
+          next unless x >= btn[:x_start] && x <= btn[:x_end]
+          wt = model.selected_worktree
+          return { type: :run_action, name: btn[:action], worktree: wt } if wt
+        end
+      end
+
       # Resource legend button click
-      if y == areas[:legend_y] && model.has_resources?
+      if areas[:legend_y] && y == areas[:legend_y] && model.has_resources?
         areas[:legend_buttons].each do |btn|
           next unless x >= btn[:x_start] && x <= btn[:x_end]
           wt = model.selected_worktree

@@ -6,6 +6,7 @@ module Wotr
   class CLI
     INIT_TEMPLATE = <<~YAML
       # .wotr/config — wotr configuration
+      # See: https://github.com/gtmax/wotr
 
       # hooks:
       #   new: |
@@ -13,6 +14,14 @@ module Wotr
       #     # pnpm install --frozen-lockfile
       #   switch: |
       #     # wotr acquire web-server
+
+      # actions:
+      #   lint:
+      #     key: l
+      #     run: pnpm lint
+      #   test:
+      #     key: t
+      #     run: pnpm test
 
       # resources:
       #   web-server:
@@ -40,6 +49,19 @@ module Wotr
       #       bin/dev db:migrate
       #     inquire: |
       #       wotr-output status=compatible
+    YAML
+
+    INIT_LOCAL_TEMPLATE = <<~YAML
+      # .wotr/config.local — personal wotr overrides (not committed to git)
+      #
+      # Same format as .wotr/config. Values here are deep-merged on top of
+      # the shared config. Use this for personal actions, editor preferences,
+      # or machine-specific hooks.
+
+      # actions:
+      #   editor:
+      #     key: e
+      #     switch_to: nvim .
     YAML
 
     USAGE = <<~USAGE
@@ -157,7 +179,14 @@ module Wotr
       FileUtils.mkdir_p(File.dirname(config_path))
       File.write(config_path, INIT_TEMPLATE)
       puts "Created #{config_path}"
-      puts "Edit it to match your project's dev setup."
+
+      local_path = config_path + ".local"
+      unless File.exist?(local_path)
+        File.write(local_path, INIT_LOCAL_TEMPLATE)
+        puts "Created #{local_path}"
+      end
+
+      puts "Edit them to match your project's dev setup."
     end
 
     def claude_available?

@@ -10,15 +10,36 @@ module Wotr
   class Config
     CONFIG_FILE = ".wotr/config"
 
-    def self.load(root)
-      path = File.join(root, CONFIG_FILE)
-      return new({}, root: root) unless File.exist?(path)
+    CONFIG_LOCAL_FILE = ".wotr/config.local"
 
-      data = YAML.safe_load(File.read(path)) || {}
+    def self.load(root)
+      data = {}
+
+      path = File.join(root, CONFIG_FILE)
+      if File.exist?(path)
+        data = YAML.safe_load(File.read(path)) || {}
+      end
+
+      local_path = File.join(root, CONFIG_LOCAL_FILE)
+      if File.exist?(local_path)
+        local_data = YAML.safe_load(File.read(local_path)) || {}
+        data = deep_merge(data, local_data)
+      end
+
       new(data, root: root)
     rescue Psych::SyntaxError => e
       warn "wotr: config parse error: #{e.message}"
       new({}, root: root)
+    end
+
+    def self.deep_merge(base, override)
+      base.merge(override) do |_key, old_val, new_val|
+        if old_val.is_a?(Hash) && new_val.is_a?(Hash)
+          deep_merge(old_val, new_val)
+        else
+          new_val
+        end
+      end
     end
 
     def initialize(data, root: nil)
@@ -40,6 +61,14 @@ module Wotr
 
     def resource_names
       (@data["resources"] || {}).keys
+    end
+
+    def action(name)
+      (@data["actions"] || {})[name.to_s]
+    end
+
+    def action_names
+      (@data["actions"] || {}).keys
     end
 
     def exclusive?(name)
