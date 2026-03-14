@@ -77,6 +77,7 @@ module Wotr
         wotr status [--json]          Show current branch
         wotr list                     List all worktrees
         wotr log [-f] [-n N] [--path] Tail the scripts log
+        wotr update                   Update to latest version from GitHub
         wotr version                  Print version
         wotr help                     Show this help
 
@@ -108,6 +109,7 @@ module Wotr
       when "resources"                then cmd_resources
       when "run"                      then cmd_run(args)
       when "log"                      then cmd_log(args)
+      when "update"                   then cmd_update
       else
         warn "wotr: unknown command '#{cmd}'"
         warn "Run 'wotr help' for usage."
@@ -407,6 +409,15 @@ module Wotr
       tail_args = ["-n", n.to_s]
       tail_args << "-f" if follow
       exec("tail", *tail_args, log_file)
+    end
+
+    REPO_URL = "gtmax/wotr"
+
+    def cmd_update
+      puts "Updating wotr..."
+      # Re-run the install script from GitHub
+      exec("/bin/bash", "-c",
+        "curl -fsSL https://raw.githubusercontent.com/#{REPO_URL}/main/install.sh | bash")
     end
 
     # --- Helpers ---

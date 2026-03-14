@@ -112,7 +112,7 @@ else
 fi
 
 echo "Installing gem..."
-"$GEM" install "$GEM_FILE"
+"$GEM" install --force "$GEM_FILE"
 echo
 
 # 3. Install binaries onto PATH

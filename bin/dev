@@ -60,7 +60,7 @@ case "$COMMAND" in
       rm -f "$GEM_BIN_PRE/$wrapper" 2>/dev/null
     done
     echo "Installing gem..."
-    "$GEM" install wotr-*.gem
+    "$GEM" install --force wotr-*.gem
     rm -f wotr-*.gem
     # Symlink wotr (gem executable) into /opt/homebrew/bin
     GEM_BIN=$("$GEM" environment | awk '/EXECUTABLE DIRECTORY/ {print $NF}')
