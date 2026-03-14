@@ -52,6 +52,15 @@ ensure_ruby() {
   read -r REPLY </dev/tty 2>/dev/null || REPLY=""
   if [[ ! "$REPLY" =~ ^[Nn]$ ]]; then
     brew install ruby
+    # Brew ruby is keg-only — add to PATH for this session and user's shell
+    RUBY_BIN="$BREW_PREFIX/opt/ruby/bin"
+    export PATH="$RUBY_BIN:$PATH"
+    if [ -f "$HOME/.zshrc" ]; then
+      if ! grep -q "$RUBY_BIN" "$HOME/.zshrc" 2>/dev/null; then
+        echo "export PATH=\"$RUBY_BIN:\$PATH\"" >> "$HOME/.zshrc"
+        echo "  Added $RUBY_BIN to ~/.zshrc"
+      fi
+    fi
     RUBY="$BREW_RUBY"
     GEM="$BREW_GEM"
   else
