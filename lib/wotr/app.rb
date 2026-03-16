@@ -369,10 +369,10 @@ module Wotr
       model.start_background_activity
       # Replace-in-place so repeated polls don't accumulate lines
       last = model.log_entries.last
-      if last && last[:text].start_with?("Checking resource status")
-        model.log_replace_last("Checking resource status...")
+      if last && last[:text].start_with?("Refreshing resource status")
+        model.log_replace_last("Refreshing resource status...")
       else
-        model.log_message("Checking resource status...")
+        model.log_message("Refreshing resource status...")
       end
 
       cfg = model.repository.config

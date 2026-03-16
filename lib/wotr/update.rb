@@ -48,7 +48,7 @@ module Wotr
       when :update_resource_icons
         model.update_resource_icons(message[:icons_by_path])
         model.finish_background_activity
-        model.log_replace_last("Checking resource status... done.")
+        model.log_replace_last("Refreshing resource status... done.")
         nil
       end
     end
