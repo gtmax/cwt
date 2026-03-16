@@ -56,7 +56,7 @@ case "$COMMAND" in
     "$RUBY" -S gem build wotr.gemspec
     # Remove stale gem bin wrappers that conflict with re-install
     GEM_BIN_PRE=$("$GEM" environment | awk '/EXECUTABLE DIRECTORY/ {print $NF}')
-    for wrapper in wotr-output wotr-default-setup wotr-rename-tab; do
+    for wrapper in wotr-output wotr-default-setup wotr-launch-claude wotr-rename-tab; do
       rm -f "$GEM_BIN_PRE/$wrapper" 2>/dev/null
     done
     echo "Installing gem..."
@@ -71,7 +71,7 @@ case "$COMMAND" in
     # Symlink Ruby-based executables and copy shell scripts into /opt/homebrew/bin
     GEM_DIR=$("$GEM" environment gemdir)
     GEM_BIN_INSTALLED=$("$GEM" environment | awk '/EXECUTABLE DIRECTORY/ {print $NF}')
-    for script in wotr-default-setup wotr-output wotr-rename-tab; do
+    for script in wotr-default-setup wotr-launch-claude wotr-output wotr-rename-tab; do
       SRC=$(ls "$GEM_DIR/gems/wotr-"*/exe/$script 2>/dev/null | tail -1)
       if [ -n "$SRC" ] && [ -d "/opt/homebrew/bin" ]; then
         cp "$SRC" "/opt/homebrew/bin/$script"
@@ -97,10 +97,17 @@ SETUP
     fi
     echo "Done. Run 'wotr' to launch."
     ;;
+  test)
+    ensure_ruby
+    BUNDLE="$(dirname "$RUBY")/bundle"
+    echo "Using Ruby $("$RUBY" -e 'print RUBY_VERSION')"
+    exec "$BUNDLE" exec "$RUBY" -Ilib -Itest -e "Dir.glob('test/**/test_*.rb').each { |f| require File.expand_path(f) }"
+    ;;
   *)
     echo "Usage: bin/dev <command>"
     echo ""
     echo "Commands:"
     echo "  install   Build and install wotr locally (installs Ruby via Homebrew if needed)"
+    echo "  test      Run the test suite"
     ;;
 esac

@@ -47,6 +47,7 @@ module Wotr
     #   2. .wotr/config new   (repo-level config hook, if defined)
     #   3. default symlinks   (if neither of the above ran)
     # Scripts can call `wotr-default-setup` to opt into default behaviour explicitly.
+    # Returns { ran_foreground: Boolean }
     def run_setup!(visible: true)
       puts "\e[1;36m🌊 Setting up new worktree 🌊\e[0m\n\n" if visible
 
@@ -54,19 +55,23 @@ module Wotr
       run_hook(@repository.user_setup_script_path, label: "~/.wotr/setup", visible: visible) if ran_user
 
       env = { "WOTR_ROOT" => File.realpath(@repository.root), "WOTR_WORKTREE" => @path }
-      cfg_hook = @repository.config.hook("new")
+      steps = @repository.config.hook_steps("new")
 
-      if cfg_hook
-        @repository.config.run_hook("new", env: env, chdir: @path, visible: visible)
+      if steps.any?
+        result = @repository.config.run_hook("new", env: env, chdir: @path, visible: visible)
+        { ran_foreground: result[:ran_foreground] }
       elsif !ran_user
         setup_default_symlinks
+        { ran_foreground: false }
+      else
+        { ran_foreground: false }
       end
     end
 
     # Run the switch hook (fires on every worktree jump)
-    # Returns { ran: Boolean, success: Boolean }
+    # Returns { ran: Boolean, success: Boolean, ran_foreground: Boolean }
     def run_switch!
-      return { ran: false } unless @repository.config.hook("switch")
+      return { ran: false, ran_foreground: false } unless @repository.config.hook("switch")
 
       env = { "WOTR_ROOT" => File.realpath(@repository.root), "WOTR_WORKTREE" => @path }
       @repository.config.run_hook("switch", env: env, chdir: @path, visible: true)

@@ -25,7 +25,7 @@ fi
 if [ -n "$CMUX_WORKSPACE_ID" ]; then
   CMUX_CLI="/Applications/cmux.app/Contents/Resources/bin/cmux"
   if [ -x "$CMUX_CLI" ]; then
-    "$CMUX_CLI" rename-workspace "$NAME" 2>/dev/null || true
+    "$CMUX_CLI" rename-workspace "$NAME" >/dev/null 2>&1 || true
     exit 0
   fi
 fi

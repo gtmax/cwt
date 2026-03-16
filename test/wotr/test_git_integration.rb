@@ -11,14 +11,25 @@ module Wotr
   class TestGitIntegration < Minitest::Test
     include GitRepoTestHelper
 
-    parallelize_me!
+    # Cannot parallelize — tests share ENV for HOME and WOTR_START_POINT
 
     def setup
       create_test_repo
       @repo = Repository.new(@tmpdir)
+      @default_branch = `git -C #{@tmpdir} rev-parse --abbrev-ref HEAD`.strip
+      ENV["WOTR_START_POINT"] = @default_branch
+
+      # Isolate user-level ~/.wotr/setup
+      @original_home = ENV["HOME"]
+      @fake_home = Dir.mktmpdir("wotr-home-")
+      ENV["HOME"] = @fake_home
     end
 
     def teardown
+      ENV.delete("WOTR_START_POINT")
+      ENV["HOME"] = @original_home
+      FileUtils.rm_rf(@fake_home) if @fake_home
+      FileUtils.rm_rf(@repo.worktrees_dir) if @repo
       cleanup_test_repo
     end
 
@@ -27,7 +38,7 @@ module Wotr
     def test_create_worktree_creates_setup_marker
       result = @repo.create_worktree("test-session")
 
-      assert result[:success], "Worktree should be created"
+      assert result[:success], "Worktree should be created: #{result[:error]}"
       assert result[:worktree].needs_setup?,
              "Setup marker should exist in new worktree"
     end
@@ -35,6 +46,7 @@ module Wotr
     def test_mark_setup_complete_removes_marker
       result = @repo.create_worktree("test-session")
       wt = result[:worktree]
+      assert result[:success], "Expected success: #{result[:error]}"
 
       assert wt.needs_setup?, "Should need setup initially"
 
@@ -45,75 +57,76 @@ module Wotr
 
     # ========== Setup Execution Tests ==========
 
-    def test_run_setup_executes_custom_script
+    def test_run_setup_executes_user_script
       result = @repo.create_worktree("test-session")
       wt = result[:worktree]
+      assert result[:success], "Expected success: #{result[:error]}"
 
-      # Create .wotr/setup script
-      FileUtils.mkdir_p(@repo.config_dir)
-      File.write(@repo.setup_script_path, "#!/bin/bash\necho 'setup ran' > setup_ran.txt")
-      FileUtils.chmod(0o755, @repo.setup_script_path)
+      # Create user-level setup script at fake ~/.wotr/setup
+      FileUtils.mkdir_p(File.join(@fake_home, ".wotr"))
+      File.write(@repo.user_setup_script_path, "#!/bin/bash\necho 'setup ran' > setup_ran.txt")
+      FileUtils.chmod(0o755, @repo.user_setup_script_path)
 
-      # Capture output
       output = capture_io { wt.run_setup!(visible: true) }.join
 
       assert File.exist?(File.join(wt.path, "setup_ran.txt")),
              "Setup script should have created file in worktree"
-      assert_match(/Running .wotr\/setup/, output,
+      assert_match(/Running ~\/.wotr\/setup/, output,
              "Should show setup header")
     end
 
     def test_run_setup_falls_back_to_symlinks
       result = @repo.create_worktree("test-session")
       wt = result[:worktree]
+      assert result[:success], "Expected success: #{result[:error]}"
 
       # Create files to symlink in root
       File.write(File.join(@tmpdir, ".env"), "SECRET=value")
       FileUtils.mkdir_p(File.join(@tmpdir, "node_modules"))
       File.write(File.join(@tmpdir, "node_modules", ".keep"), "")
 
-      # No .wotr/setup script exists
+      # No user script or config hooks — falls back to symlinks
       wt.run_setup!(visible: false)
 
-      # Check symlinks were created
       assert File.symlink?(File.join(wt.path, ".env")),
              ".env should be symlinked"
       assert File.symlink?(File.join(wt.path, "node_modules")),
              "node_modules should be symlinked"
     end
 
-    def test_run_setup_does_not_symlink_when_script_exists
+    def test_run_setup_does_not_symlink_when_user_script_exists
       result = @repo.create_worktree("test-session")
       wt = result[:worktree]
+      assert result[:success], "Expected success: #{result[:error]}"
 
       # Create files to symlink in root
       File.write(File.join(@tmpdir, ".env"), "SECRET=value")
 
-      # Create .wotr/setup script (does nothing)
-      FileUtils.mkdir_p(@repo.config_dir)
-      File.write(@repo.setup_script_path, "#!/bin/bash\n# do nothing")
-      FileUtils.chmod(0o755, @repo.setup_script_path)
+      # Create user-level setup script (does nothing)
+      FileUtils.mkdir_p(File.join(@fake_home, ".wotr"))
+      File.write(@repo.user_setup_script_path, "#!/bin/bash\n# do nothing")
+      FileUtils.chmod(0o755, @repo.user_setup_script_path)
 
       capture_io { wt.run_setup!(visible: true) }
 
       refute File.exist?(File.join(wt.path, ".env")),
-             ".env should NOT be symlinked when custom script exists"
+             ".env should NOT be symlinked when user script exists"
     end
 
     def test_wotr_root_env_var_is_set_for_setup
       result = @repo.create_worktree("test-session")
       wt = result[:worktree]
+      assert result[:success], "Expected success: #{result[:error]}"
 
-      # Create .wotr/setup script that writes WOTR_ROOT to a file
-      FileUtils.mkdir_p(@repo.config_dir)
-      File.write(@repo.setup_script_path, "#!/bin/bash\necho \"$WOTR_ROOT\" > wotr_root.txt")
-      FileUtils.chmod(0o755, @repo.setup_script_path)
+      # Create user-level setup script that writes WOTR_ROOT to a file
+      FileUtils.mkdir_p(File.join(@fake_home, ".wotr"))
+      File.write(@repo.user_setup_script_path, "#!/bin/bash\necho \"$WOTR_ROOT\" > wotr_root.txt")
+      FileUtils.chmod(0o755, @repo.user_setup_script_path)
 
       capture_io { wt.run_setup!(visible: true) }
 
       root_file = File.join(wt.path, "wotr_root.txt")
       assert File.exist?(root_file), "Script should have created wotr_root.txt"
-      # Use realpath to handle macOS /var -> /private/var symlink
       assert_equal File.realpath(@tmpdir), File.read(root_file).strip,
              "WOTR_ROOT should be set to the repo root"
     end
@@ -123,8 +136,8 @@ module Wotr
     def test_run_teardown_executes_script
       result = @repo.create_worktree("test-session")
       wt = result[:worktree]
+      assert result[:success], "Expected success: #{result[:error]}"
 
-      # Create .wotr/teardown script using WOTR_ROOT env var
       FileUtils.mkdir_p(@repo.config_dir)
       File.write(@repo.teardown_script_path, "#!/bin/bash\necho 'teardown ran' > \"$WOTR_ROOT/teardown_ran.txt\"")
       FileUtils.chmod(0o755, @repo.teardown_script_path)
@@ -140,6 +153,7 @@ module Wotr
     def test_run_teardown_returns_ran_false_when_no_script
       result = @repo.create_worktree("test-session")
       wt = result[:worktree]
+      assert result[:success], "Expected success: #{result[:error]}"
 
       teardown_result = wt.run_teardown!
 
@@ -149,8 +163,8 @@ module Wotr
     def test_run_teardown_returns_success_status
       result = @repo.create_worktree("test-session")
       wt = result[:worktree]
+      assert result[:success], "Expected success: #{result[:error]}"
 
-      # Create .wotr/teardown script that succeeds
       FileUtils.mkdir_p(@repo.config_dir)
       File.write(@repo.teardown_script_path, "#!/bin/bash\nexit 0")
       FileUtils.chmod(0o755, @repo.teardown_script_path)
@@ -165,8 +179,8 @@ module Wotr
     def test_run_teardown_returns_failure_status
       result = @repo.create_worktree("test-session")
       wt = result[:worktree]
+      assert result[:success], "Expected success: #{result[:error]}"
 
-      # Create .wotr/teardown script that fails
       FileUtils.mkdir_p(@repo.config_dir)
       File.write(@repo.teardown_script_path, "#!/bin/bash\nexit 1")
       FileUtils.chmod(0o755, @repo.teardown_script_path)
@@ -183,9 +197,9 @@ module Wotr
     def test_delete_runs_teardown
       result = @repo.create_worktree("test-session")
       wt = result[:worktree]
+      assert result[:success], "Expected success: #{result[:error]}"
       wt.mark_setup_complete!
 
-      # Create .wotr/teardown script using WOTR_ROOT env var
       FileUtils.mkdir_p(@repo.config_dir)
       File.write(@repo.teardown_script_path, "#!/bin/bash\necho 'teardown ran' > \"$WOTR_ROOT/teardown_evidence.txt\"")
       FileUtils.chmod(0o755, @repo.teardown_script_path)
@@ -199,9 +213,9 @@ module Wotr
     def test_delete_fails_on_teardown_failure_without_force
       result = @repo.create_worktree("test-session")
       wt = result[:worktree]
+      assert result[:success], "Expected success: #{result[:error]}"
       wt.mark_setup_complete!
 
-      # Create .wotr/teardown script that fails
       FileUtils.mkdir_p(@repo.config_dir)
       File.write(@repo.teardown_script_path, "#!/bin/bash\nexit 1")
       FileUtils.chmod(0o755, @repo.teardown_script_path)
@@ -217,9 +231,9 @@ module Wotr
     def test_delete_succeeds_on_teardown_failure_with_force
       result = @repo.create_worktree("test-session")
       wt = result[:worktree]
+      assert result[:success], "Expected success: #{result[:error]}"
       wt.mark_setup_complete!
 
-      # Create .wotr/teardown script that fails
       FileUtils.mkdir_p(@repo.config_dir)
       File.write(@repo.teardown_script_path, "#!/bin/bash\nexit 1")
       FileUtils.chmod(0o755, @repo.teardown_script_path)
@@ -237,14 +251,16 @@ module Wotr
       # 1. Create worktree
       result = @repo.create_worktree("full-workflow")
       wt = result[:worktree]
-      assert result[:success]
+      assert result[:success], "Expected success: #{result[:error]}"
       assert wt.needs_setup?
 
-      # 2. Create setup and teardown scripts using WOTR_ROOT env var
+      # 2. Create user setup and repo teardown scripts
+      FileUtils.mkdir_p(File.join(@fake_home, ".wotr"))
+      File.write(@repo.user_setup_script_path, "#!/bin/bash\necho 'setup' > setup.log")
+      FileUtils.chmod(0o755, @repo.user_setup_script_path)
+
       FileUtils.mkdir_p(@repo.config_dir)
-      File.write(@repo.setup_script_path, "#!/bin/bash\necho 'setup' > setup.log")
       File.write(@repo.teardown_script_path, "#!/bin/bash\necho 'teardown' > \"$WOTR_ROOT/teardown.log\"")
-      FileUtils.chmod(0o755, @repo.setup_script_path)
       FileUtils.chmod(0o755, @repo.teardown_script_path)
 
       # 3. Run setup (simulating first resume)
@@ -257,7 +273,6 @@ module Wotr
       refute wt.needs_setup?, "Setup should not run again"
 
       # 5. Delete worktree (runs teardown)
-      # Force needed because setup.log is an untracked file
       capture_io { wt.delete!(force: true) }
       assert File.exist?(File.join(@tmpdir, "teardown.log"))
       refute wt.exists?
@@ -268,15 +283,13 @@ module Wotr
     def test_get_status_detects_dirty_worktree
       result = @repo.create_worktree("status-test")
       wt = result[:worktree]
+      assert result[:success], "Expected success: #{result[:error]}"
 
-      # Mark setup complete to remove the marker file
       wt.mark_setup_complete!
 
-      # Initially clean (no uncommitted changes)
       status = Git.get_status(wt.path)
       refute status[:dirty], "Worktree should be clean initially"
 
-      # Create uncommitted file
       File.write(File.join(wt.path, "uncommitted.txt"), "dirty")
 
       status = Git.get_status(wt.path)
@@ -288,6 +301,7 @@ module Wotr
     def test_discover_works_from_worktree
       result = @repo.create_worktree("discover-test")
       wt = result[:worktree]
+      assert result[:success], "Expected success: #{result[:error]}"
 
       discovered = Repository.discover(wt.path)
       assert_equal File.realpath(@tmpdir), File.realpath(discovered.root)

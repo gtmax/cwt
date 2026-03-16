@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# wotr-launch-claude — launch Claude Code in the current worktree.
+#
+# Detects whether an existing conversation exists and passes --continue
+# if so. Intended as an fg step in .wotr/config:
+#
+#   hooks:
+#     switch:
+#       - fg: wotr-launch-claude
+DIR="${WOTR_WORKTREE:-$(pwd)}"
+cd "$DIR"
+
+# Try to continue the last conversation; fall back to a fresh session.
+# On failure, clear the "no session found" message before starting fresh.
+claude --continue || { printf '\e[H\e[2J'; exec claude; }

@@ -142,6 +142,14 @@ module Wotr
       case cmd[:type]
       when :quit
         model.quit
+      when :copy_log
+        text = model.log_text
+        if text.empty?
+          model.log_message("Nothing to copy.")
+        else
+          IO.popen('pbcopy', 'w') { |io| io.write(text) }
+          model.log_replace_last("Log copied to clipboard.")
+        end
       when :delete_worktree
         wt = cmd[:worktree]
         label = wt.branch || wt.name
@@ -194,14 +202,40 @@ module Wotr
             main_queue << { type: :task_complete, result: nil }
           end
         end
-      when :create_worktree, :refresh_list
+      when :create_worktree
+        name = cmd[:name]
+        model.set_mode(:normal)
+        model.start_task_log("Creating #{name}")
+        model.start_background_activity
+
+        Thread.new do
+          main_queue << { type: :task_log_line, line: "Creating worktree #{name}..." }
+          result = model.repository.create_worktree(name)
+
+          if result[:success]
+            main_queue << { type: :task_log_line, line: "Created. Running setup..." }
+            main_queue << { type: :task_complete,
+                            result: { type: :post_create_worktree, worktree: result[:worktree], name: name } }
+          else
+            main_queue << { type: :task_log_line, line: "Error: #{result[:error]}" }
+            main_queue << { type: :task_complete, message: "Failed to create #{name}: #{result[:error]}" }
+          end
+        rescue StandardError => e
+          main_queue << { type: :task_log_line, line: "Error: #{e.message}" }
+          main_queue << { type: :task_complete, result: nil }
+        end
+      when :post_create_worktree
+        Update.refresh_list(model)
+        start_background_fetch(model, main_queue)
+        model.select_worktree_by_path(cmd[:worktree].path)
+        handle_command({ type: :resume_worktree, worktree: cmd[:worktree] }, model, tui, main_queue)
+      when :refresh_list
         result = Update.handle(model, cmd)
         handle_command(result, model, tui, main_queue)
+        start_resource_poll(model, main_queue) if model.has_resources?
       when :cd_worktree
         model.resume_to = cmd[:worktree]
         model.quit
-      when :switch_worktree
-        suspend_tui_and_switch(cmd[:worktree], model, tui)
       when :acquire_resource
         cfg = model.repository.config
         repo_root = File.realpath(model.repository.root)
@@ -220,89 +254,130 @@ module Wotr
         end
       when :run_action
         run_action(cmd[:name], cmd[:worktree], model, tui, main_queue)
-      when :resume_worktree, :suspend_and_resume
-        suspend_tui_and_run(cmd[:worktree], model, tui)
-        Update.refresh_list(model)
-        start_background_fetch(model, main_queue)
+      when :run_fg_steps
+        run_fg_steps(cmd[:steps], cmd[:name], cmd[:env],
+                     cmd[:worktree], model, tui, main_queue,
+                     on_complete: cmd[:on_complete])
+      when :resume_worktree
+        resume_worktree(cmd[:worktree], model, tui, main_queue)
+      when :run_hook_chain
+        run_hook_chain(cmd[:hook], cmd[:worktree], model, tui, main_queue)
       end
     end
 
     def self.run_action(name, worktree, model, tui, main_queue)
       cfg = model.repository.config
-      action = cfg.action(name)
-      return unless action
+      steps = cfg.action_steps(name)
+      return if steps.empty?
 
       repo_root = File.realpath(model.repository.root)
       env = { 'WOTR_ROOT' => repo_root, 'WOTR_WORKTREE' => worktree.path }
       wt_label = worktree.branch || worktree.name
-      switch_to_script = action["switch_to"]
-      run_script = action["run"]
 
-      if switch_to_script
-        # Suspend TUI and switch to the command
-        RatatuiRuby.restore_terminal
-        disable_mouse_tracking
-        puts "\e[H\e[2J"
+      # Split at first foreground step: bg runs in log pane, fg suspends TUI
+      first_fg = steps.index { |s| s[:mode] == :foreground }
+      bg_steps = first_fg ? steps[0...first_fg] : steps
+      fg_steps = first_fg ? steps[first_fg..] : []
 
-        if run_script
-          puts "\e[1;36m🌊 #{name}: preparing... 🌊\e[0m\n\n"
-          cfg.send(:run_script_visible, run_script, env: env, chdir: worktree.path)
-          puts
-        end
-
-        begin
-          Dir.chdir(worktree.path) do
-            if defined?(Bundler)
-              Bundler.with_unbundled_env { system(env, "/bin/bash", "-c", switch_to_script) }
-            else
-              system(env, "/bin/bash", "-c", switch_to_script)
-            end
-          end
-        rescue StandardError => e
-          puts "Error: #{e.message}"
-          print "Press Enter to return..."
-          STDIN.gets rescue nil
-        ensure
-          RatatuiRuby.init_terminal
-        end
-
-        Update.refresh_list(model)
-        start_background_fetch(model, main_queue)
-      elsif run_script
-        # Run in background with log pane
+      if bg_steps.any?
         model.start_task_log("#{name} (#{wt_label})")
-        model.set_message("Running #{name}...")
+        model.log_message("Running #{name} action...")
         model.start_background_activity
 
         Thread.new do
-          cfg.send(:write_tmpscript, "#!/usr/bin/env bash\n#{run_script}") do |path|
-            IO.popen(env.merge("WOTR_LOG" => cfg.log_path || "/dev/null"),
-                     [path], chdir: worktree.path, err: [:child, :out]) do |io|
-              io.each_line { |line| main_queue << { type: :task_log_line, line: line.chomp } }
-            end
-          end
+          success = run_bg_steps_in_thread(bg_steps, env, worktree.path, cfg, main_queue)
 
-          if $?.success?
+          if success && fg_steps.any?
+            main_queue << { type: :task_complete,
+                            result: { type: :run_fg_steps, steps: fg_steps,
+                                      name: name, worktree: worktree, env: env } }
+          elsif success
             main_queue << { type: :task_complete, message: "#{name} completed." }
-          else
-            main_queue << { type: :task_complete, message: "#{name} failed (exit #{$?.exitstatus})." }
           end
         rescue StandardError => e
           main_queue << { type: :task_log_line, line: "Error: #{e.message}" }
           main_queue << { type: :task_complete, result: nil }
         end
+      elsif fg_steps.any?
+        # Starts with foreground — suspend TUI immediately
+        run_fg_steps(fg_steps, name, env, worktree, model, tui, main_queue)
       end
+    end
+
+    # Run background steps in a thread, streaming output to the log pane.
+    # Returns true if all steps succeeded (or failures were non-fatal).
+    def self.run_bg_steps_in_thread(steps, env, chdir, cfg, main_queue)
+      steps.each do |step|
+        cfg.send(:write_tmpscript, "#!/usr/bin/env bash\n#{step[:script]}") do |path|
+          IO.popen(env.merge("WOTR_LOG" => cfg.log_path || "/dev/null"),
+                   [path], chdir: chdir, err: [:child, :out]) do |io|
+            io.each_line { |line| main_queue << { type: :task_log_line, line: line.chomp } }
+          end
+        end
+
+        unless $?.success?
+          if step[:stop_on_failure] != false
+            main_queue << { type: :task_complete, message: "Failed (exit #{$?.exitstatus})." }
+            return false
+          else
+            main_queue << { type: :task_log_line, line: "Step exited #{$?.exitstatus} (continuing)" }
+          end
+        end
+      end
+      true
+    end
+
+    # Suspend TUI and run foreground steps sequentially.
+    # on_complete: optional command hash to chain after fg steps finish.
+    def self.run_fg_steps(steps, name, env, worktree, model, tui, main_queue, on_complete: nil)
+      cfg = model.repository.config
+
+      RatatuiRuby.restore_terminal
+      disable_mouse_tracking
+      puts "\e[H\e[2J"
+
+      begin
+        steps.each do |step|
+          case step[:mode]
+          when :background
+            cfg.send(:run_script_visible, step[:script], env: env, chdir: worktree.path)
+          when :foreground
+            Dir.chdir(worktree.path) do
+              if defined?(Bundler)
+                Bundler.with_unbundled_env { system(env, "/bin/bash", "-c", step[:script]) }
+              else
+                system(env, "/bin/bash", "-c", step[:script])
+              end
+            end
+          end
+        end
+      rescue StandardError => e
+        puts "Error: #{e.message}"
+        print "Press Enter to return..."
+        STDIN.gets rescue nil
+      ensure
+        RatatuiRuby.init_terminal
+      end
+
+      Update.refresh_list(model)
+      start_background_fetch(model, main_queue)
+      handle_command(on_complete, model, tui, main_queue) if on_complete
     end
 
     def self.start_resource_poll(model, main_queue)
       model.mark_resource_poll_started
       model.start_background_activity
-      model.set_message("Checking resource status...")
+      # Replace-in-place so repeated polls don't accumulate lines
+      last = model.log_entries.last
+      if last && last[:text].start_with?("Checking resource status")
+        model.log_replace_last("Checking resource status...")
+      else
+        model.log_message("Checking resource status...")
+      end
 
       cfg = model.repository.config
       if cfg.resource_names.empty?
         model.finish_background_activity
-        model.set_message("Ready")
         return
       end
 
@@ -362,19 +437,6 @@ module Wotr
       end
     end
 
-    def self.can_continue_claude?
-      # Claude stores conversations in ~/.claude/projects/<encoded-path>/
-      # where the path has / replaced with -
-      encoded = Dir.pwd.gsub("/", "-")
-      project_dir = File.expand_path("~/.claude/projects/#{encoded}")
-      return false unless Dir.exist?(project_dir)
-
-      # Check for any conversation files
-      Dir.glob(File.join(project_dir, "*.jsonl")).any?
-    rescue StandardError
-      false
-    end
-
     def self.start_background_fetch(model, main_queue)
       # Increment generation to invalidate old results
       model.increment_generation
@@ -410,91 +472,88 @@ module Wotr
       end
     end
 
+    # Resume a worktree: run new hook (if first time) then chain to switch hook.
+    def self.resume_worktree(worktree, model, tui, main_queue)
+      cfg = model.repository.config
+      env = { "WOTR_ROOT" => File.realpath(model.repository.root), "WOTR_WORKTREE" => worktree.path }
+
+      if worktree.needs_setup?
+        # Chain: run user setup → new hook → switch hook
+        steps = cfg.hook_steps("new")
+        on_complete = { type: :run_hook_chain, hook: "switch", worktree: worktree }
+
+        # Prepend user-level ~/.wotr/setup as a background step
+        if model.repository.has_user_setup_script?
+          user_script = File.read(model.repository.user_setup_script_path)
+          steps = [{ mode: :background, script: user_script }] + steps
+        end
+
+        run_hook_steps(steps, "new", env, worktree, model, tui, main_queue, on_complete: on_complete) do
+          worktree.mark_setup_complete!
+        end
+      else
+        run_hook_steps(cfg.hook_steps("switch"), "switch", env, worktree, model, tui, main_queue)
+      end
+    end
+
+    # Run a hook by name (used by :run_hook_chain command for chaining new→switch).
+    def self.run_hook_chain(hook_name, worktree, model, tui, main_queue)
+      cfg = model.repository.config
+      env = { "WOTR_ROOT" => File.realpath(model.repository.root), "WOTR_WORKTREE" => worktree.path }
+      run_hook_steps(cfg.hook_steps(hook_name), hook_name, env, worktree, model, tui, main_queue, clear_log: false)
+    end
+
+    # Unified hook/step execution: bg steps in log pane, fg steps suspend TUI.
+    # on_complete: optional command hash to chain after all steps finish.
+    # clear_log: whether to clear the log pane (false for chained hooks).
+    # block: optional callback invoked after bg steps complete (e.g. mark_setup_complete!).
+    def self.run_hook_steps(steps, label, env, worktree, model, tui, main_queue, on_complete: nil, clear_log: true, &after_bg)
+      return handle_command(on_complete, model, tui, main_queue) if steps.empty? && on_complete
+      return if steps.empty?
+
+      wt_label = worktree.branch || worktree.name
+      cfg = model.repository.config
+
+      # Split at first foreground step
+      first_fg = steps.index { |s| s[:mode] == :foreground }
+      bg_steps = first_fg ? steps[0...first_fg] : steps
+      fg_steps = first_fg ? steps[first_fg..] : []
+
+      if bg_steps.any?
+        model.start_task_log("#{label} (#{wt_label})", clear: clear_log)
+        model.log_message("Running #{label} hook...")
+        model.start_background_activity
+
+        Thread.new do
+          success = run_bg_steps_in_thread(bg_steps, env, worktree.path, cfg, main_queue)
+          after_bg&.call
+
+          if success && fg_steps.any?
+            main_queue << { type: :task_complete,
+                            result: { type: :run_fg_steps, steps: fg_steps,
+                                      name: label, worktree: worktree, env: env,
+                                      on_complete: on_complete } }
+          elsif success && on_complete
+            main_queue << { type: :task_complete, result: on_complete }
+          elsif success
+            main_queue << { type: :task_complete, message: "#{label} completed." }
+          else
+            main_queue << { type: :task_complete, message: "#{label} failed." }
+          end
+        rescue StandardError => e
+          main_queue << { type: :task_log_line, line: "Error: #{e.message}" }
+          main_queue << { type: :task_complete, result: nil }
+        end
+      elsif fg_steps.any?
+        after_bg&.call
+        run_fg_steps(fg_steps, label, env, worktree, model, tui, main_queue, on_complete: on_complete)
+      end
+    end
+
     def self.disable_mouse_tracking
       # Disable SGR and X10 mouse tracking that ratatui enables
       print "\e[?1000l\e[?1002l\e[?1003l\e[?1006l"
       $stdout.flush
-    end
-
-    def self.suspend_tui_and_switch(worktree, model, tui)
-      RatatuiRuby.restore_terminal
-      disable_mouse_tracking
-
-      puts "\e[H\e[2J" # Clear screen
-
-      # Run setup if this is a new worktree
-      if worktree.needs_setup?
-        begin
-          worktree.run_setup!(visible: true)
-          worktree.mark_setup_complete!
-        rescue Interrupt
-          puts "\nSetup aborted."
-          RatatuiRuby.init_terminal
-          return
-        end
-      end
-
-      # Run switch hook (stop-all + start servers)
-      result = worktree.run_switch!
-
-      unless result[:ran]
-        puts "No .wotr/switch hook found."
-        print "Press Enter to return..."
-        begin
-          STDIN.gets
-        rescue Interrupt
-          nil
-        end
-        RatatuiRuby.init_terminal
-        return
-      end
-
-      # After switch, cd into the worktree and quit TUI
-      model.resume_to = worktree
-      model.quit
-
-      RatatuiRuby.init_terminal
-    end
-
-    def self.suspend_tui_and_run(worktree, model, tui)
-      RatatuiRuby.restore_terminal
-      disable_mouse_tracking
-
-      puts "\e[H\e[2J" # Clear screen
-
-      # Run setup if this is a new worktree
-      if worktree.needs_setup?
-        begin
-          worktree.run_setup!(visible: true)
-          worktree.mark_setup_complete!
-        rescue Interrupt
-          puts "\nSetup aborted."
-          RatatuiRuby.init_terminal
-          return
-        end
-      end
-
-      worktree.run_switch!
-
-      puts "Launching claude in #{worktree.path}..."
-      begin
-        Dir.chdir(worktree.path) do
-          claude_cmd = can_continue_claude? ? "claude --continue" : "claude"
-          if defined?(Bundler)
-            Bundler.with_unbundled_env { system(claude_cmd) }
-          else
-            system(claude_cmd)
-          end
-        end
-        # Track last resumed worktree for exit
-        model.resume_to = worktree
-      rescue StandardError => e
-        puts "Error: #{e.message}"
-        print "Press any key to return..."
-        STDIN.getc
-      ensure
-        RatatuiRuby.init_terminal
-      end
     end
   end
 end

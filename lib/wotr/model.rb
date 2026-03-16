@@ -26,7 +26,7 @@ module Wotr
     }.freeze
 
     # Navigation keys not shown in footer but still reserved for resource shortcuts
-    NAV_KEYS = %w[q j k].freeze
+    NAV_KEYS = %w[q j k l].freeze
 
     RESERVED_KEYS = (
       SHORTCUTS[:normal].map { |s| s[:key] } + NAV_KEYS
@@ -34,9 +34,9 @@ module Wotr
 
     LOG_PANE_MAX_LINES = 200
 
-    attr_reader :repository, :selection_index, :mode, :input_buffer, :message,
+    attr_reader :repository, :selection_index, :mode, :input_buffer,
                 :running, :fetch_generation, :filter_query,
-                :task_log, :task_label
+                :log_entries, :log_scroll_offset, :task_label
     attr_accessor :resume_to, :mouse_areas
     attr_writer :selection_index
 
@@ -47,7 +47,6 @@ module Wotr
       @mode = :normal
       @input_buffer = String.new
       @filter_query = String.new
-      @message = ""
       @running = true
       @fetch_generation = 0
       @resume_to = nil
@@ -56,27 +55,66 @@ module Wotr
       @last_resource_poll = nil
       @last_worktree_poll = nil
       @background_activity = 0
-      @task_log = []
+      @log_entries = []        # unified log buffer: [{ text:, style: }]
+      @log_scroll_offset = 0
       @task_label = nil
     end
 
-    def start_task_log(label)
+    # Unified log: all feedback (status messages, task output) goes here.
+
+    def log_message(text, style: :dim)
+      @log_entries << { text: text, style: style }
+      @log_entries.shift if @log_entries.size > LOG_PANE_MAX_LINES
+      @log_scroll_offset = 0  # auto-scroll to bottom on new content
+    end
+
+    def log_text
+      @log_entries.map { |e| e[:text] }.join("\n")
+    end
+
+    def log_replace_last(text, style: :dim)
+      if @log_entries.empty?
+        log_message(text, style: style)
+      else
+        @log_entries[-1] = { text: text, style: style }
+      end
+    end
+
+    def message
+      @log_entries.last&.dig(:text) || ""
+    end
+
+    def set_message(msg)
+      log_message(msg)
+    end
+
+    def start_task_log(label, clear: true)
       @task_label = label
-      @task_log = []
+      if clear
+        @log_entries.clear
+        @log_scroll_offset = 0
+      end
     end
 
     def append_task_log(line)
-      @task_log << line
-      @task_log.shift if @task_log.size > LOG_PANE_MAX_LINES
+      log_message(line)
     end
 
     def clear_task_log
-      @task_log = []
       @task_label = nil
     end
 
     def task_running?
       !@task_label.nil?
+    end
+
+    def log_scroll_up(n = 1)
+      max = [@log_entries.size - 1, 0].max
+      @log_scroll_offset = [@log_scroll_offset + n, max].min
+    end
+
+    def log_scroll_down(n = 1)
+      @log_scroll_offset = [@log_scroll_offset - n, 0].max
     end
 
     def worktrees
@@ -140,14 +178,7 @@ module Wotr
 
     def set_mode(mode)
       @mode = mode
-      if mode == :creating
-        @input_buffer = String.new
-        @message = "Enter session name: "
-      elsif mode == :filtering
-        @message = "Filter: "
-      else
-        @message = "Ready"
-      end
+      @input_buffer = String.new if mode == :creating
     end
 
     def set_filter(query)
@@ -171,10 +202,6 @@ module Wotr
       else
         @input_buffer.chop!
       end
-    end
-
-    def set_message(msg)
-      @message = msg
     end
 
     def selected_worktree

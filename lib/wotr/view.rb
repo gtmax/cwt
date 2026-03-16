@@ -19,43 +19,36 @@ module Wotr
       modal_border: { fg: :magenta }
     }.freeze
 
-    LOG_PANE_HEIGHT = 8
+    LOG_MIN_HEIGHT = 4   # 2 content rows + 2 border rows
+    LOG_RATIO = 0.30     # log gets 30% of space shared with list
 
     def self.draw(model, tui, frame)
-      app_width = [frame.area.width, 100].min
-      msg_lines = wrap_text(model.message, app_width - 2).size
+      app_area = frame.area
+
+      # Footer: shortcuts + actions + resources + dirty legend
       legend_height = model.has_resources? ? 1 : 0
-      actions_height = model.has_actions? ? 1 : 0
-      footer_height = 1 + actions_height + legend_height + 1 + 1 + 1 + msg_lines  # keys + actions + legend + blank + dirty + status border + msg
+      # Flow shortcuts + actions onto one line if width allows
+      shortcut_width = model.current_shortcuts.sum { |s| s[:key].length + 2 + s[:desc].length + 2 }
+      action_width = model.has_actions? ? model.action_shortcuts.sum { |k, n| k.length + 2 + n.length + 2 } : 0
+      actions_inline = model.has_actions? && (shortcut_width + action_width + 2) <= app_area.width
+      actions_height = (model.has_actions? && !actions_inline) ? 1 : 0
+      footer_height = 1 + actions_height + legend_height + 1 + 1  # keys(+actions) + actions? + legend? + blank + dirty
 
-      show_log = model.task_running?
-      log_height = show_log ? LOG_PANE_HEIGHT : 0
+      # Compute log height: 30% of space shared with list, min 4 rows
+      fixed_overhead = 2 + footer_height  # header + footer
+      available = app_area.height - fixed_overhead
+      log_height = [(available * LOG_RATIO).to_i, LOG_MIN_HEIGHT].max
 
-      content_height = [model.visible_worktrees.size + 4 + footer_height + log_height, frame.area.height].min
-
-      app_area = centered_app_area(tui, frame.area, width: 100, height: content_height)
-
-      if show_log
-        main_area, log_area, footer_area = tui.layout_split(
-          app_area,
-          direction: :vertical,
-          constraints: [
-            tui.constraint_fill(1),
-            tui.constraint_length(log_height),
-            tui.constraint_length(footer_height)
-          ]
-        )
-      else
-        main_area, footer_area = tui.layout_split(
-          app_area,
-          direction: :vertical,
-          constraints: [
-            tui.constraint_fill(1),
-            tui.constraint_length(footer_height)
-          ]
-        )
-        log_area = nil
-      end
+      # Layout: header + table (fill), footer (fixed), log (proportional)
+      main_area, footer_area, log_area = tui.layout_split(
+        app_area,
+        direction: :vertical,
+        constraints: [
+          tui.constraint_fill(1),
+          tui.constraint_length(footer_height),
+          tui.constraint_length(log_height)
+        ]
+      )
 
       header_area, list_area = tui.layout_split(
         main_area,
@@ -68,24 +61,13 @@ module Wotr
 
       draw_header(tui, frame, header_area)
       draw_table(model, tui, frame, list_area)
-      draw_log_pane(model, tui, frame, log_area) if log_area
-      draw_footer(model, tui, frame, footer_area)
-      update_mouse_areas(model, list_area, footer_area, msg_lines)
+      draw_footer(model, tui, frame, footer_area, actions_inline)
+      draw_log_strip(model, tui, frame, log_area)
+      update_mouse_areas(model, list_area, footer_area, log_area, actions_inline)
 
       return unless model.mode == :creating
 
       draw_input_modal(model, tui, frame)
-    end
-
-    def self.centered_app_area(tui, area, width:, height:)
-      w = [area.width, width].min
-      h = [[area.height, height].min, 15].max
-      h = [h, area.height].min
-
-      x = area.x + (area.width - w) / 2
-      y = area.y + (area.height - h) / 2
-
-      tui.rect(x: x, y: y, width: w, height: h)
     end
 
     def self.draw_header(tui, frame, area)
@@ -191,32 +173,30 @@ module Wotr
       frame.render_widget(table, area)
     end
 
-    def self.draw_footer(model, tui, frame, area)
-      keys = []
-
-      add_key = lambda { |key, desc|
-        keys << tui.text_span(content: " #{key} ", style: tui.style(bg: :dark_gray, fg: :white))
-        keys << tui.text_span(content: " #{desc} ", style: tui.style(**THEME[:dim]))
+    def self.draw_footer(model, tui, frame, area, actions_inline)
+      add_key = lambda { |spans, key, desc|
+        spans << tui.text_span(content: " #{key} ", style: tui.style(bg: :dark_gray, fg: :white))
+        spans << tui.text_span(content: " #{desc} ", style: tui.style(**THEME[:dim]))
       }
       indent = tui.text_span(content: ' ', style: tui.style(**THEME[:text]))
 
-      model.current_shortcuts.each { |s| add_key.call(s[:key], s[:desc]) }
+      # Build shortcut spans
+      shortcut_spans = [indent]
+      model.current_shortcuts.each { |s| add_key.call(shortcut_spans, s[:key], s[:desc]) }
 
-      msg_style = if model.message.downcase.include?('error') || model.message.downcase.include?('warning')
-                    tui.style(fg: :red, modifiers: [:bold])
-                  else
-                    tui.style(**THEME[:dim])
-                  end
+      text = []
 
-      text = [tui.text_line(spans: [indent] + keys)]
-
-      if model.has_actions?
-        action_spans = [indent]
-        model.action_shortcuts.each do |key, name|
-          action_spans << tui.text_span(content: " #{key} ", style: tui.style(bg: :dark_gray, fg: :white))
-          action_spans << tui.text_span(content: " #{name} ", style: tui.style(**THEME[:dim]))
+      if actions_inline && model.has_actions?
+        # Flow actions onto the same line as shortcuts
+        model.action_shortcuts.each { |key, name| add_key.call(shortcut_spans, key, name) }
+        text << tui.text_line(spans: shortcut_spans)
+      else
+        text << tui.text_line(spans: shortcut_spans)
+        if model.has_actions?
+          action_spans = [indent]
+          model.action_shortcuts.each { |key, name| add_key.call(action_spans, key, name) }
+          text << tui.text_line(spans: action_spans)
         end
-        text = text + [tui.text_line(spans: action_spans)]
       end
 
       if model.has_resources?
@@ -228,93 +208,99 @@ module Wotr
           legend_spans << tui.text_span(content: " #{shortcut} ", style: tui.style(bg: :dark_gray, fg: :white)) if shortcut
           legend_spans << tui.text_span(content: " #{icon} #{name} ", style: tui.style(**THEME[:dim]))
         end
-        text = text + [tui.text_line(spans: legend_spans)]
+        text << tui.text_line(spans: legend_spans)
       end
 
-      text = text + [tui.text_line(spans: [])]
+      text << tui.text_line(spans: [])  # blank
 
       dirty_line = tui.text_line(spans: [
         indent,
         tui.text_span(content: '💧', style: tui.style(**THEME[:dirty])),
         tui.text_span(content: ' uncommitted changes', style: tui.style(**THEME[:dim]))
       ])
-      text = text + [dirty_line]
-
-      # Split footer: top (keys + legend + dirty) and bottom (status message)
-      msg_width = [area.width - 4, 1].max
-      msg_lines = wrap_text(model.message, msg_width)
-      status_height = 1 + msg_lines.size  # border + message lines
-
-      top_area, status_area = tui.layout_split(
-        area,
-        direction: :vertical,
-        constraints: [
-          tui.constraint_fill(1),
-          tui.constraint_length(status_height)
-        ]
-      )
+      text << dirty_line
 
       footer = tui.paragraph(text: text)
-      frame.render_widget(footer, top_area)
-
-      status_text = msg_lines.map do |line|
-        tui.text_line(spans: [indent, tui.text_span(content: line, style: msg_style)])
-      end
-      status_widget = tui.paragraph(
-        text: status_text,
-        block: tui.block(
-          borders: [:top],
-          border_style: tui.style(**THEME[:border])
-        )
-      )
-      frame.render_widget(status_widget, status_area)
-
-      # 2-row spinner at the far right, aligned with keys + legend rows
-      return unless model.background_activity?
-
-      n = (Time.now.to_f * 10).to_i
-      top_char = SPINNER[n % SPINNER.length]
-      bot_char = SPINNER[(n + SPINNER.length / 2) % SPINNER.length]
-
-      sy = area.y  # no border, aligned with keys line
-      sx = area.x + area.width - 2      # one col from the right edge
-
-      spinner_widget = tui.paragraph(
-        text: [
-          tui.text_line(spans: [tui.text_span(content: top_char, style: tui.style(**THEME[:accent]))]),
-          tui.text_line(spans: [tui.text_span(content: bot_char, style: tui.style(**THEME[:accent]))])
-        ]
-      )
-      frame.render_widget(spinner_widget, tui.rect(x: sx, y: sy, width: 1, height: 2))
+      frame.render_widget(footer, area)
     end
 
-    def self.draw_log_pane(model, tui, frame, area)
-      # Show the last N lines that fit in the area (area height - 2 for borders)
-      visible_lines = area.height - 2
-      lines = model.task_log.last([visible_lines, 0].max)
+    def self.draw_log_strip(model, tui, frame, area)
+      visible_lines = area.height - 2  # subtract borders
+      entries = model.log_entries
+      offset = model.log_scroll_offset
 
-      text = lines.map do |line|
+      # Slice the visible window from the log buffer
+      end_idx = [entries.size - offset, 0].max
+      start_idx = [end_idx - visible_lines, 0].max
+      lines = entries[start_idx...end_idx] || []
+
+      text = lines.map do |entry|
+        style = case entry[:style]
+                when :error then tui.style(fg: :red, modifiers: [:bold])
+                when :normal then tui.style(**THEME[:text])
+                else tui.style(**THEME[:dim])
+                end
         tui.text_line(spans: [
-          tui.text_span(content: line, style: tui.style(**THEME[:dim]))
+          tui.text_span(content: " #{entry[:text]}", style: style)
         ])
       end
 
-      title = " #{model.task_label} "
+      # Border title: task label when running, scroll indicator when scrolled
+      title_text = if model.task_running?
+                     " #{model.task_label} "
+                   elsif offset > 0
+                     " log (scrolled ↑#{offset}) "
+                   else
+                     ""
+                   end
+
+      titles = title_text.empty? ? [] : [{
+        content: tui.text_line(spans: [
+          tui.text_span(content: title_text, style: tui.style(**THEME[:accent]))
+        ])
+      }]
 
       log_widget = tui.paragraph(
         text: text,
         block: tui.block(
-          titles: [{
-            content: tui.text_line(spans: [
-              tui.text_span(content: title, style: tui.style(**THEME[:accent]))
-            ])
-          }],
+          titles: titles,
           borders: [:all],
           border_style: tui.style(**THEME[:border])
         )
       )
 
       frame.render_widget(log_widget, area)
+
+      # "l copy log" button on the bottom border, right-aligned
+      if model.log_entries.any?
+        copy_label = " l  copy log "
+        cx = area.x + area.width - copy_label.length - 1
+        cy = area.y + area.height - 1  # bottom border row
+        copy_widget = tui.paragraph(
+          text: [tui.text_line(spans: [
+            tui.text_span(content: " l ", style: tui.style(bg: :dark_gray, fg: :white)),
+            tui.text_span(content: " copy log ", style: tui.style(**THEME[:dim]))
+          ])]
+        )
+        frame.render_widget(copy_widget, tui.rect(x: cx, y: cy, width: copy_label.length, height: 1))
+      end
+
+      # Double spinner inside the log pane, upper-right with margin
+      if model.background_activity?
+        n = (Time.now.to_f * 10).to_i
+        top_char = SPINNER[n % SPINNER.length]
+        bot_char = SPINNER[(n + SPINNER.length / 2) % SPINNER.length]
+        sx = area.x + area.width - 3  # 2 cols from right edge (inside border + margin)
+        sy = area.y + 1               # 1 row below top border
+
+        spinner_widget = tui.paragraph(
+          text: [
+            tui.text_line(spans: [tui.text_span(content: top_char, style: tui.style(**THEME[:accent]))]),
+            tui.text_line(spans: [tui.text_span(content: bot_char, style: tui.style(**THEME[:accent]))])
+          ]
+        )
+        frame.render_widget(spinner_widget, tui.rect(x: sx, y: sy, width: 1, height: 2))
+      end
     end
 
     def self.draw_input_modal(model, tui, frame)
@@ -355,7 +341,7 @@ module Wotr
       lines
     end
 
-    def self.update_mouse_areas(model, list_area, footer_area, _msg_lines = 0)
+    def self.update_mouse_areas(model, list_area, footer_area, log_area, actions_inline = false)
       # List rows: inside the all-borders block, header at y+1, first data row at y+2
       list_top    = list_area.y + 2
       list_bottom = list_area.y + list_area.height - 2
@@ -363,7 +349,6 @@ module Wotr
       list_right  = list_area.x + list_area.width - 1
 
       # Footer: no border, content starts at y
-      # Layout: [key line] [actions line?] [legend line?] [blank] [dirty] [status border + msg]
       key_y    = footer_area.y
       current_y = key_y + 1
 
@@ -377,18 +362,29 @@ module Wotr
         btn
       end
 
-      # Action buttons
-      action_y = model.has_actions? ? current_y : nil
+      # Action buttons — when inline, they share key_y and continue after shortcut buttons
       action_buttons = []
-      if model.has_actions?
-        x = footer_area.x + 1
+      if model.has_actions? && actions_inline
+        action_y = key_y  # same row as shortcuts
+        # x continues from where shortcuts ended
         model.action_shortcuts.each do |key, name|
           kw = key.length + 2
           dw = name.length + 2
           action_buttons << { x_start: x, x_end: x + kw + dw - 1, action: name }
           x += kw + dw
         end
+      elsif model.has_actions?
+        action_y = current_y  # separate row
+        ax = footer_area.x + 1
+        model.action_shortcuts.each do |key, name|
+          kw = key.length + 2
+          dw = name.length + 2
+          action_buttons << { x_start: ax, x_end: ax + kw + dw - 1, action: name }
+          ax += kw + dw
+        end
         current_y += 1
+      else
+        action_y = nil
       end
 
       # Resource legend buttons — use _text_width for emoji
@@ -412,12 +408,20 @@ module Wotr
         end
       end
 
+      # Copy log button on bottom border of log pane
+      copy_label_len = " l  copy log ".length
+      copy_log_x_start = log_area.x + log_area.width - copy_label_len - 1
+      copy_log_x_end = copy_log_x_start + copy_label_len - 1
+      copy_log_y = log_area.y + log_area.height - 1
+
       model.mouse_areas = {
         list_top: list_top, list_bottom: list_bottom,
         list_left: list_left, list_right: list_right,
         key_y: key_y, key_buttons: key_buttons,
         action_y: action_y, action_buttons: action_buttons,
-        legend_y: legend_y, legend_buttons: legend_buttons
+        legend_y: legend_y, legend_buttons: legend_buttons,
+        log_top: log_area.y,
+        copy_log_y: copy_log_y, copy_log_x_start: copy_log_x_start, copy_log_x_end: copy_log_x_end
       }
     end
 

@@ -55,6 +55,11 @@ module Wotr
       (@data["hooks"] || {})[name.to_s]
     end
 
+    # Returns normalized array of { mode: :background|:foreground, script: String }
+    def hook_steps(name)
+      normalize_steps(hook(name))
+    end
+
     def resource(name)
       (@data["resources"] || {})[name.to_s]
     end
@@ -71,6 +76,14 @@ module Wotr
       (@data["actions"] || {}).keys
     end
 
+    # Returns normalized array of { mode: :background|:foreground, script: String }
+    def action_steps(name)
+      act = action(name)
+      return [] unless act.is_a?(Hash)
+
+      normalize_steps(act["steps"])
+    end
+
     def exclusive?(name)
       resource(name)&.fetch("exclusive", false) == true
     end
@@ -79,22 +92,41 @@ module Wotr
       @data.empty?
     end
 
-    # Run a named hook (new, switch). Output flows to terminal and log.
-    # Returns { ran: Boolean, success: Boolean }
+    # Run a named hook (new, switch) via CLI (wotr run <hook>).
+    # Returns { ran: Boolean, success: Boolean, ran_foreground: Boolean }
     def run_hook(name, env: {}, chdir: Dir.pwd, visible: false)
-      script = hook(name)
-      return { ran: false } if script.nil?
+      steps = hook_steps(name)
+      return { ran: false, ran_foreground: false } if steps.empty?
 
       if visible
         puts "\e[1;36m🌊 Running hook: #{name} 🌊\e[0m\n\n"
       end
 
-      success = run_script_visible(script, env: env, chdir: chdir)
+      ran_foreground = false
+      last_success = true
+
+      steps.each do |step|
+        case step[:mode]
+        when :background
+          last_success = run_script_visible(step[:script], env: env, chdir: chdir)
+        when :foreground
+          ran_foreground = true
+          Dir.chdir(chdir) do
+            if defined?(Bundler)
+              Bundler.with_unbundled_env { last_success = system(env, "/bin/bash", "-c", step[:script]) }
+            else
+              last_success = system(env, "/bin/bash", "-c", step[:script])
+            end
+          end
+        end
+
+        break if !last_success && step[:stop_on_failure] != false
+      end
 
       puts if visible
 
-      if visible && !success
-        puts "\e[1;33mWarning: hook '#{name}' failed (exit code: #{$?.exitstatus})\e[0m"
+      if visible && !last_success
+        puts "\e[1;33mWarning: hook '#{name}' failed\e[0m"
         print "Press Enter to continue or Ctrl+C to abort..."
         begin
           STDIN.gets
@@ -103,7 +135,7 @@ module Wotr
         end
       end
 
-      { ran: true, success: !!success }
+      { ran: true, success: !!last_success, ran_foreground: ran_foreground }
     end
 
     # Run the acquire script. Output flows to terminal and log.
@@ -140,6 +172,23 @@ module Wotr
     end
 
     private
+
+    # Normalize a step array into [{ mode:, script:, stop_on_failure: }] hashes.
+    def normalize_steps(raw)
+      return [] if raw.nil?
+      return [] unless raw.is_a?(Array)
+
+      raw.filter_map do |step|
+        if step.is_a?(Hash)
+          stop = step.fetch("stop_on_failure", true)
+          if step["fg"]
+            { mode: :foreground, script: step["fg"], stop_on_failure: stop }
+          elsif step["bg"]
+            { mode: :background, script: step["bg"], stop_on_failure: stop }
+          end
+        end
+      end
+    end
 
     # Run a script with output to terminal (tee'd to log as well).
     def run_script_visible(content, env: {}, chdir: Dir.pwd)

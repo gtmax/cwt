@@ -15,19 +15,6 @@ module Wotr
       when :refresh_list
         refresh_list(model)
         :start_background_fetch
-      when :create_worktree
-        result = model.repository.create_worktree(message[:name])
-        if result[:success]
-          model.set_message("Created worktree: #{message[:name]}")
-          refresh_list(model)
-          model.set_mode(:normal)
-          model.set_filter(String.new) # Clear filter
-          # Auto-enter the new session
-          { type: :resume_worktree, worktree: result[:worktree] }
-        else
-          model.set_message("Error: #{result[:error]}")
-          nil
-        end
       when :delete_worktree
         worktree = message[:worktree]
         force = message[:force] || false
@@ -46,8 +33,6 @@ module Wotr
           model.set_message("Error deleting: #{result[:error]}. Use 'D' to force delete.")
           nil
         end
-      when :resume_worktree
-        { type: :suspend_and_resume, worktree: message[:worktree] }
       when :update_status
         return nil if message[:generation] != model.fetch_generation
 
@@ -63,7 +48,7 @@ module Wotr
       when :update_resource_icons
         model.update_resource_icons(message[:icons_by_path])
         model.finish_background_activity
-        model.set_message("Checking resource status... done.")
+        model.log_replace_last("Checking resource status... done.")
         nil
       end
     end
@@ -125,6 +110,8 @@ module Wotr
         elsif event.s?
           wt = model.selected_worktree
           return { type: :cd_worktree, worktree: wt } if wt
+        elsif event.l?
+          return { type: :copy_log }
         elsif event.R? # Shift+r
           return { type: :refresh_list }
         elsif (resource_name = model.resource_shortcuts[event.to_s])
@@ -142,12 +129,20 @@ module Wotr
       areas = model.mouse_areas
       return nil if areas.empty?
 
-      # Scroll wheel → move selection
+      # Scroll wheel → log strip or worktree list depending on position
       if event.scroll_up?
-        model.move_selection(-1)
+        if areas[:log_top] && event.y >= areas[:log_top]
+          model.log_scroll_up
+        else
+          model.move_selection(-1)
+        end
         return nil
       elsif event.scroll_down?
-        model.move_selection(1)
+        if areas[:log_top] && event.y >= areas[:log_top]
+          model.log_scroll_down
+        else
+          model.move_selection(1)
+        end
         return nil
       end
 
@@ -195,6 +190,12 @@ module Wotr
           wt = model.selected_worktree
           return { type: :acquire_resource, name: btn[:resource], worktree: wt } if wt
         end
+      end
+
+      # Copy log button click
+      if areas[:copy_log_y] && y == areas[:copy_log_y] &&
+         x >= areas[:copy_log_x_start] && x <= areas[:copy_log_x_end]
+        return { type: :copy_log }
       end
 
       nil

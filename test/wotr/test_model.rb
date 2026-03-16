@@ -179,5 +179,150 @@ module Wotr
 
       assert_equal "prefix-suffix", @model.input_buffer
     end
+
+    # ========== Unified Log Buffer Tests ==========
+
+    def test_log_message_appends_to_entries
+      @model.log_message("hello")
+      @model.log_message("world")
+
+      assert_equal 2, @model.log_entries.size
+      assert_equal "hello", @model.log_entries[0][:text]
+      assert_equal "world", @model.log_entries[1][:text]
+    end
+
+    def test_log_message_default_style_is_dim
+      @model.log_message("test")
+      assert_equal :dim, @model.log_entries.last[:style]
+    end
+
+    def test_log_message_with_error_style
+      @model.log_message("bad thing", style: :error)
+      assert_equal :error, @model.log_entries.last[:style]
+    end
+
+    def test_message_returns_last_log_entry
+      @model.log_message("first")
+      @model.log_message("second")
+      assert_equal "second", @model.message
+    end
+
+    def test_message_returns_empty_when_no_entries
+      assert_equal "", @model.message
+    end
+
+    def test_set_message_delegates_to_log_message
+      @model.set_message("hello via set_message")
+      assert_equal 1, @model.log_entries.size
+      assert_equal "hello via set_message", @model.log_entries.last[:text]
+    end
+
+    def test_append_task_log_delegates_to_log_message
+      @model.append_task_log("log line")
+      assert_equal 1, @model.log_entries.size
+      assert_equal "log line", @model.log_entries.last[:text]
+    end
+
+    def test_start_task_log_clears_log_entries
+      @model.log_message("old stuff")
+      @model.start_task_log("my task")
+
+      assert_equal 0, @model.log_entries.size
+      assert_equal "my task", @model.task_label
+    end
+
+    def test_clear_task_log_keeps_log_entries
+      @model.start_task_log("my task")
+      @model.log_message("line 1")
+      @model.log_message("line 2")
+      @model.clear_task_log
+
+      assert_nil @model.task_label
+      refute @model.task_running?
+      # Log entries are preserved after clear (only label is removed)
+      assert_equal 2, @model.log_entries.size
+    end
+
+    def test_log_buffer_max_size
+      201.times { |i| @model.log_message("line #{i}") }
+      assert_equal 200, @model.log_entries.size
+      # First entry should have been shifted out
+      assert_equal "line 1", @model.log_entries.first[:text]
+      assert_equal "line 200", @model.log_entries.last[:text]
+    end
+
+    def test_log_scroll_up
+      10.times { |i| @model.log_message("line #{i}") }
+      @model.log_scroll_up(3)
+      assert_equal 3, @model.log_scroll_offset
+    end
+
+    def test_log_scroll_down
+      10.times { |i| @model.log_message("line #{i}") }
+      @model.log_scroll_up(5)
+      @model.log_scroll_down(2)
+      assert_equal 3, @model.log_scroll_offset
+    end
+
+    def test_log_scroll_cannot_go_negative
+      @model.log_message("one")
+      @model.log_scroll_down(10)
+      assert_equal 0, @model.log_scroll_offset
+    end
+
+    def test_log_scroll_capped_at_buffer_size
+      3.times { |i| @model.log_message("line #{i}") }
+      @model.log_scroll_up(100)
+      assert_equal 2, @model.log_scroll_offset  # max is entries.size - 1
+    end
+
+    def test_log_scroll_resets_on_new_message
+      10.times { |i| @model.log_message("line #{i}") }
+      @model.log_scroll_up(5)
+      assert_equal 5, @model.log_scroll_offset
+
+      @model.log_message("new message")
+      assert_equal 0, @model.log_scroll_offset
+    end
+
+    def test_start_task_log_sets_label
+      @model.start_task_log("installing deps")
+      assert_equal "installing deps", @model.task_label
+      assert @model.task_running?
+    end
+
+    def test_task_running_reflects_label
+      refute @model.task_running?
+      @model.start_task_log("task")
+      assert @model.task_running?
+      @model.clear_task_log
+      refute @model.task_running?
+    end
+
+    def test_set_mode_does_not_log
+      @model.set_mode(:creating)
+      assert_equal 0, @model.log_entries.size
+
+      @model.set_mode(:filtering)
+      assert_equal 0, @model.log_entries.size
+
+      @model.set_mode(:normal)
+      assert_equal 0, @model.log_entries.size
+    end
+
+    def test_log_replace_last
+      @model.log_message("Checking...")
+      @model.log_replace_last("Checking... done.")
+
+      assert_equal 1, @model.log_entries.size
+      assert_equal "Checking... done.", @model.message
+    end
+
+    def test_log_replace_last_on_empty_buffer
+      @model.log_replace_last("first entry")
+
+      assert_equal 1, @model.log_entries.size
+      assert_equal "first entry", @model.message
+    end
   end
 end
