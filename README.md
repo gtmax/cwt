@@ -1,4 +1,4 @@
-# wotr
+# 🌊 wotr 🌊
 
 I used to run multiple Claude Code sessions on the same repo. The problem: they'd step on each other's files, and I'd have to wait for one to finish before switching branches to start the next. Git worktrees solve the isolation problem — each worktree is a full checkout on its own branch — but they bring a pile of new ones. Every worktree needs its `.env` files copied over, dependencies installed, `node_modules` symlinked (if using Node for example), the dev server pointed at the right directory. Which worktree is the web server running in? Did I install dependencies in this one? Where did my Claude conversation go?
 
