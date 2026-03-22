@@ -1,8 +1,10 @@
 # 🌊 wotr 🌊
 
-I used to run multiple Claude Code sessions on the same repo. The problem: they'd step on each other's files, and I'd have to wait for one to finish before switching branches to start the next. Git worktrees solve the isolation problem — each worktree is a full checkout on its own branch — but they bring a pile of new ones. Every worktree needs its `.env` files copied over, dependencies installed, `node_modules` symlinked (if using Node for example), the dev server pointed at the right directory. Which worktree is the web server running in? Did I install dependencies in this one? Where did my Claude conversation go?
+I used to run multiple Claude Code sessions on the same repo. The problem: they'd step on each other's files, and I'd have to wait for one to finish before switching branches to start the next. Git worktrees solve the isolation problem — each worktree is a full checkout on its own branch — but they bring a pile of new ones. Every worktree needs its `.env` files copied over, dependencies installed, `node_modules` symlinked (if using Node for example). Which worktree is the web server running in? Did I install dependencies in this one? Where did my Claude conversation go?
 
 wotr manages all of that. It's a TUI that creates worktrees, runs your setup scripts, tracks which worktree owns shared resources like dev servers and databases, and launches your AI agent with the conversation automatically resumed.
+
+![wotr demo](assets/demo.gif)
 
 Built on top of [cwt (claude-worktree)](https://github.com/bucket-robotics/claude-worktree). cwt introduced the core idea: a TUI for managing git worktrees as isolated AI coding sessions. wotr extends it with a YAML config system, custom actions, shared resource management, a CLI, and Claude Code skills.
 
