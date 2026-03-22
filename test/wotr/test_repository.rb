@@ -158,16 +158,6 @@ module Wotr
       assert_equal File.join(@tmpdir, ".wotr"), repo.config_dir
     end
 
-    def test_has_user_setup_script_returns_boolean
-      repo = Repository.new(@tmpdir)
-      assert_includes [true, false], repo.has_user_setup_script?
-    end
-
-    def test_user_setup_script_path
-      repo = Repository.new(@tmpdir)
-      assert_equal File.join(Dir.home, ".wotr", "setup"), repo.user_setup_script_path
-    end
-
     def test_has_teardown_script
       repo = Repository.new(@tmpdir)
 

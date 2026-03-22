@@ -17,17 +17,10 @@ module Wotr
       @repo = Repository.new(@tmpdir)
       @default_branch = `git -C #{@tmpdir} rev-parse --abbrev-ref HEAD`.strip
       ENV["WOTR_START_POINT"] = @default_branch
-
-      # Isolate user-level ~/.wotr/setup
-      @original_home = ENV["HOME"]
-      @fake_home = Dir.mktmpdir("wotr-home-")
-      ENV["HOME"] = @fake_home
     end
 
     def teardown
       ENV.delete("WOTR_START_POINT")
-      ENV["HOME"] = @original_home
-      FileUtils.rm_rf(@fake_home) if @fake_home
       FileUtils.rm_rf(@repo.worktrees_dir) if @repo
       cleanup_test_repo
     end
@@ -83,21 +76,6 @@ module Wotr
 
       wt.mark_needs_setup!
       assert wt.needs_setup?
-    end
-
-    def test_run_setup_with_user_script
-      result = @repo.create_worktree("custom-setup")
-      wt = result[:worktree]
-      assert result[:success], "Expected success: #{result[:error]}"
-
-      # Create user-level setup script at fake ~/.wotr/setup
-      FileUtils.mkdir_p(File.join(@fake_home, ".wotr"))
-      File.write(@repo.user_setup_script_path, "#!/bin/bash\necho 'setup ran' > setup_ran.txt")
-      FileUtils.chmod(0o755, @repo.user_setup_script_path)
-
-      capture_io { wt.run_setup!(visible: true) }
-
-      assert File.exist?(File.join(wt.path, "setup_ran.txt"))
     end
 
     def test_run_setup_falls_back_to_symlinks
@@ -246,20 +224,5 @@ module Wotr
       refute Dir.exist?(parent_dir), "Parent dir should be removed when empty"
     end
 
-    def test_wotr_root_env_var_is_set_for_setup
-      result = @repo.create_worktree("env-test")
-      wt = result[:worktree]
-      assert result[:success], "Expected success: #{result[:error]}"
-
-      FileUtils.mkdir_p(File.join(@fake_home, ".wotr"))
-      File.write(@repo.user_setup_script_path, "#!/bin/bash\necho \"$WOTR_ROOT\" > wotr_root.txt")
-      FileUtils.chmod(0o755, @repo.user_setup_script_path)
-
-      capture_io { wt.run_setup!(visible: true) }
-
-      root_file = File.join(wt.path, "wotr_root.txt")
-      assert File.exist?(root_file)
-      assert_equal File.realpath(@tmpdir), File.read(root_file).strip
-    end
   end
 end

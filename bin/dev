@@ -79,23 +79,7 @@ case "$COMMAND" in
         echo "Installed $script → /opt/homebrew/bin/$script"
       fi
     done
-    # Create ~/.wotr/setup template if it doesn't exist yet
-    if [ ! -f "$HOME/.wotr/setup" ]; then
-      mkdir -p "$HOME/.wotr"
-      cat > "$HOME/.wotr/setup" <<'SETUP'
-#!/bin/bash
-# ~/.wotr/setup — runs when creating a new worktree in any repo.
-#
-# wotr-defaults symlinks .env, node_modules, and .claude from the repo root.
-# Remove it to opt out. Add your own steps below.
-wotr-defaults
-SETUP
-      chmod +x "$HOME/.wotr/setup"
-      echo "Created ~/.wotr/setup"
-    else
-      echo "~/.wotr/setup already exists, skipping."
-    fi
-    echo "Done. Run 'wotr' to launch."
+    echo "Done. Run 'wotr init' in your repo to create a .wotr/config file."
     ;;
   test)
     ensure_ruby

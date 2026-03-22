@@ -526,15 +526,9 @@ module Wotr
       env = { "WOTR_ROOT" => File.realpath(model.repository.root), "WOTR_WORKTREE" => worktree.path }
 
       if worktree.needs_setup?
-        # Chain: run user setup → new hook → switch hook
+        # Chain: run new hook → switch hook
         steps = cfg.hook_steps("new")
         on_complete = { type: :run_hook_chain, hook: "switch", worktree: worktree }
-
-        # Prepend user-level ~/.wotr/setup as a background step
-        if model.repository.has_user_setup_script?
-          user_script = File.read(model.repository.user_setup_script_path)
-          steps = [{ mode: :background, script: user_script }] + steps
-        end
 
         run_hook_steps(steps, "new", env, worktree, model, tui, main_queue, on_complete: on_complete) do
           worktree.mark_setup_complete!

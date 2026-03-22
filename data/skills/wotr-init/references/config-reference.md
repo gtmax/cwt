@@ -82,9 +82,8 @@ Use `stop_on_failure: false` for best-effort steps like tab renaming that should
 
 ### Hook Execution Order (for `new`)
 
-1. `~/.wotr/setup` (user-level global hook, if executable)
-2. `.wotr/config` `new:` hook (if defined)
-3. Default symlinks (`.env`, `node_modules`) — ONLY if neither 1 nor 2 ran
+1. `.wotr/config` `new:` hook (if defined)
+2. Default symlinks (`.env`, `node_modules`) — ONLY if no hook ran
 
 ## Resources
 

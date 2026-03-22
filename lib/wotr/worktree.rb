@@ -43,16 +43,12 @@ module Wotr
 
     # Run setup hooks for a new worktree.
     # Execution order:
-    #   1. ~/.wotr/setup      (user-level, always runs if exists)
-    #   2. .wotr/config new   (repo-level config hook, if defined)
-    #   3. default symlinks   (if neither of the above ran)
+    #   1. .wotr/config new   (repo-level config hook, if defined)
+    #   2. default symlinks   (if no config hook ran)
     # Scripts can call `wotr-default-setup` to opt into default behaviour explicitly.
     # Returns { ran_foreground: Boolean }
     def run_setup!(visible: true)
       puts "\e[1;36m🌊 Setting up new worktree 🌊\e[0m\n\n" if visible
-
-      ran_user = @repository.has_user_setup_script?
-      run_hook(@repository.user_setup_script_path, label: "~/.wotr/setup", visible: visible) if ran_user
 
       env = { "WOTR_ROOT" => File.realpath(@repository.root), "WOTR_WORKTREE" => @path }
       steps = @repository.config.hook_steps("new")
@@ -60,10 +56,8 @@ module Wotr
       if steps.any?
         result = @repository.config.run_hook("new", env: env, chdir: @path, visible: visible)
         { ran_foreground: result[:ran_foreground] }
-      elsif !ran_user
-        setup_default_symlinks
-        { ran_foreground: false }
       else
+        setup_default_symlinks
         { ran_foreground: false }
       end
     end

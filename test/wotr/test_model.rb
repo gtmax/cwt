@@ -251,11 +251,11 @@ module Wotr
     end
 
     def test_log_buffer_max_size
-      201.times { |i| @model.log_message("line #{i}") }
-      assert_equal 200, @model.log_entries.size
+      401.times { |i| @model.log_message("line #{i}") }
+      assert_equal 400, @model.log_entries.size
       # First entry should have been shifted out
       assert_equal "line 1", @model.log_entries.first[:text]
-      assert_equal "line 200", @model.log_entries.last[:text]
+      assert_equal "line 400", @model.log_entries.last[:text]
     end
 
     def test_log_scroll_up

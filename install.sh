@@ -78,24 +78,6 @@ symlink_bin() {
   fi
 }
 
-install_user_setup() {
-  if [ ! -f "$HOME/.wotr/setup" ]; then
-    mkdir -p "$HOME/.wotr"
-    cat > "$HOME/.wotr/setup" <<'SETUP'
-#!/bin/bash
-# ~/.wotr/setup — runs when creating a new worktree in any repo.
-#
-# wotr-default-setup symlinks .env, node_modules, and .claude from the repo root.
-# Remove it to opt out. Add your own steps below.
-wotr-default-setup
-SETUP
-    chmod +x "$HOME/.wotr/setup"
-    echo "  Created ~/.wotr/setup"
-  else
-    echo "  ~/.wotr/setup already exists, skipping."
-  fi
-}
-
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 echo "Installing wotr..."
@@ -183,7 +165,6 @@ done
 echo
 
 # 4. User setup template
-install_user_setup
-echo
-
-echo "wotr installed. Run 'wotr' in any git repo to get started."
+echo "wotr installed!"
+echo ""
+echo "To get started, run 'wotr init' in your repo to create a .wotr/config file."

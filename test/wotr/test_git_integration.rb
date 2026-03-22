@@ -18,17 +18,10 @@ module Wotr
       @repo = Repository.new(@tmpdir)
       @default_branch = `git -C #{@tmpdir} rev-parse --abbrev-ref HEAD`.strip
       ENV["WOTR_START_POINT"] = @default_branch
-
-      # Isolate user-level ~/.wotr/setup
-      @original_home = ENV["HOME"]
-      @fake_home = Dir.mktmpdir("wotr-home-")
-      ENV["HOME"] = @fake_home
     end
 
     def teardown
       ENV.delete("WOTR_START_POINT")
-      ENV["HOME"] = @original_home
-      FileUtils.rm_rf(@fake_home) if @fake_home
       FileUtils.rm_rf(@repo.worktrees_dir) if @repo
       cleanup_test_repo
     end
@@ -57,24 +50,6 @@ module Wotr
 
     # ========== Setup Execution Tests ==========
 
-    def test_run_setup_executes_user_script
-      result = @repo.create_worktree("test-session")
-      wt = result[:worktree]
-      assert result[:success], "Expected success: #{result[:error]}"
-
-      # Create user-level setup script at fake ~/.wotr/setup
-      FileUtils.mkdir_p(File.join(@fake_home, ".wotr"))
-      File.write(@repo.user_setup_script_path, "#!/bin/bash\necho 'setup ran' > setup_ran.txt")
-      FileUtils.chmod(0o755, @repo.user_setup_script_path)
-
-      output = capture_io { wt.run_setup!(visible: true) }.join
-
-      assert File.exist?(File.join(wt.path, "setup_ran.txt")),
-             "Setup script should have created file in worktree"
-      assert_match(/Running ~\/.wotr\/setup/, output,
-             "Should show setup header")
-    end
-
     def test_run_setup_falls_back_to_symlinks
       result = @repo.create_worktree("test-session")
       wt = result[:worktree]
@@ -92,43 +67,6 @@ module Wotr
              ".env should be symlinked"
       assert File.symlink?(File.join(wt.path, "node_modules")),
              "node_modules should be symlinked"
-    end
-
-    def test_run_setup_does_not_symlink_when_user_script_exists
-      result = @repo.create_worktree("test-session")
-      wt = result[:worktree]
-      assert result[:success], "Expected success: #{result[:error]}"
-
-      # Create files to symlink in root
-      File.write(File.join(@tmpdir, ".env"), "SECRET=value")
-
-      # Create user-level setup script (does nothing)
-      FileUtils.mkdir_p(File.join(@fake_home, ".wotr"))
-      File.write(@repo.user_setup_script_path, "#!/bin/bash\n# do nothing")
-      FileUtils.chmod(0o755, @repo.user_setup_script_path)
-
-      capture_io { wt.run_setup!(visible: true) }
-
-      refute File.exist?(File.join(wt.path, ".env")),
-             ".env should NOT be symlinked when user script exists"
-    end
-
-    def test_wotr_root_env_var_is_set_for_setup
-      result = @repo.create_worktree("test-session")
-      wt = result[:worktree]
-      assert result[:success], "Expected success: #{result[:error]}"
-
-      # Create user-level setup script that writes WOTR_ROOT to a file
-      FileUtils.mkdir_p(File.join(@fake_home, ".wotr"))
-      File.write(@repo.user_setup_script_path, "#!/bin/bash\necho \"$WOTR_ROOT\" > wotr_root.txt")
-      FileUtils.chmod(0o755, @repo.user_setup_script_path)
-
-      capture_io { wt.run_setup!(visible: true) }
-
-      root_file = File.join(wt.path, "wotr_root.txt")
-      assert File.exist?(root_file), "Script should have created wotr_root.txt"
-      assert_equal File.realpath(@tmpdir), File.read(root_file).strip,
-             "WOTR_ROOT should be set to the repo root"
     end
 
     # ========== Teardown Tests ==========
@@ -254,19 +192,14 @@ module Wotr
       assert result[:success], "Expected success: #{result[:error]}"
       assert wt.needs_setup?
 
-      # 2. Create user setup and repo teardown scripts
-      FileUtils.mkdir_p(File.join(@fake_home, ".wotr"))
-      File.write(@repo.user_setup_script_path, "#!/bin/bash\necho 'setup' > setup.log")
-      FileUtils.chmod(0o755, @repo.user_setup_script_path)
-
+      # 2. Create teardown script
       FileUtils.mkdir_p(@repo.config_dir)
       File.write(@repo.teardown_script_path, "#!/bin/bash\necho 'teardown' > \"$WOTR_ROOT/teardown.log\"")
       FileUtils.chmod(0o755, @repo.teardown_script_path)
 
-      # 3. Run setup (simulating first resume)
-      capture_io { wt.run_setup!(visible: true) }
+      # 3. Run setup (simulating first resume — falls back to default symlinks)
+      wt.run_setup!(visible: false)
       wt.mark_setup_complete!
-      assert File.exist?(File.join(wt.path, "setup.log"))
       refute wt.needs_setup?
 
       # 4. Second resume should NOT run setup

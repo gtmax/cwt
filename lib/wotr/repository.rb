@@ -39,20 +39,8 @@ module Wotr
       File.join(@root, CONFIG_DIR)
     end
 
-    def user_config_dir
-      File.join(Dir.home, '.wotr')
-    end
-
-    def user_setup_script_path
-      File.join(user_config_dir, "setup")
-    end
-
     def teardown_script_path
       File.join(config_dir, "teardown")
-    end
-
-    def has_user_setup_script?
-      File.exist?(user_setup_script_path) && File.executable?(user_setup_script_path)
     end
 
     def has_teardown_script?
