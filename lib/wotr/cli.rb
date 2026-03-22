@@ -85,6 +85,7 @@ module Wotr
         wotr list                     List all worktrees
         wotr log [-f] [-n N] [--path] Tail the scripts log
         wotr update                   Update to latest version from GitHub
+        wotr uninstall                Uninstall wotr and remove all binaries
         wotr version                  Print version
         wotr help                     Show this help
 
@@ -117,6 +118,7 @@ module Wotr
       when "run"                      then cmd_run(args)
       when "log"                      then cmd_log(args)
       when "update"                   then cmd_update
+      when "uninstall"                then cmd_uninstall
       else
         warn "wotr: unknown command '#{cmd}'"
         warn "Run 'wotr help' for usage."
@@ -425,6 +427,27 @@ module Wotr
       # Re-run the install script from GitHub
       exec("/bin/bash", "-c",
         "curl -fsSL https://raw.githubusercontent.com/#{REPO_URL}/main/install.sh | bash")
+    end
+
+    def cmd_uninstall
+      puts "Uninstalling wotr..."
+      ruby_bin = RbConfig.ruby
+      gem_bin = File.join(File.dirname(ruby_bin), "gem")
+      brew_prefix = ENV.fetch("HOMEBREW_PREFIX", "/opt/homebrew")
+
+      # Remove gem
+      system(gem_bin, "uninstall", "wotr", "-x")
+
+      # Remove binaries
+      %w[wotr wotr-default-setup wotr-launch-claude wotr-output wotr-rename-tab].each do |bin|
+        path = File.join(brew_prefix, "bin", bin)
+        if File.exist?(path)
+          File.delete(path)
+          puts "  Removed #{path}"
+        end
+      end
+
+      puts "wotr uninstalled."
     end
 
     # --- Helpers ---
