@@ -295,6 +295,7 @@ module Wotr
       end
 
       repo = find_repo_or_exit
+      require_config!(repo)
       cfg = config(repo)
 
       unless cfg.resource(name)
@@ -315,6 +316,7 @@ module Wotr
 
     def cmd_inquire(args)
       repo = find_repo_or_exit
+      require_config!(repo)
       cfg = config(repo)
 
       names = args.empty? ? cfg.resource_names : args
@@ -354,6 +356,7 @@ module Wotr
 
     def cmd_resources
       repo = find_repo_or_exit
+      require_config!(repo)
       cfg = config(repo)
 
       names = cfg.resource_names
@@ -380,6 +383,7 @@ module Wotr
       end
 
       repo = find_repo_or_exit
+      require_config!(repo)
       cfg = config(repo)
 
       unless cfg.hook(hook_name)
@@ -399,6 +403,7 @@ module Wotr
 
     def cmd_log(args)
       repo = find_repo_or_exit
+      require_config!(repo)
       log_file = config(repo).log_path
 
       if args.include?("--path")
@@ -454,10 +459,19 @@ module Wotr
     def find_repo_or_exit
       repo = Repository.discover(Dir.pwd)
       unless repo
-        warn "wotr: not inside a git repository"
+        warn "wotr: not a git repository (or any parent). Run wotr from a git repo root."
         exit 1
       end
       repo
+    end
+
+    def require_config!(repo)
+      config_path = File.join(repo.root, Config::CONFIG_FILE)
+      return if File.exist?(config_path)
+
+      warn "wotr: no config found at #{config_path}"
+      warn "Run 'wotr init' in this repo first."
+      exit 1
     end
 
     def config(repo)

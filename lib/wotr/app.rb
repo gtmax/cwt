@@ -20,7 +20,15 @@ module Wotr
       launch_dir = Dir.pwd
       repository = Repository.discover
       unless repository
-        puts "Error: Not in a git repository"
+        warn "wotr: not a git repository (or any parent). Run wotr from a git repo root."
+        exit 1
+      end
+
+      # Require .wotr/config
+      config_path = File.join(repository.root, Config::CONFIG_FILE)
+      unless File.exist?(config_path)
+        warn "wotr: no config found at #{config_path}"
+        warn "Run 'wotr init' in this repo first."
         exit 1
       end
 
