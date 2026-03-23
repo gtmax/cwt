@@ -172,7 +172,12 @@ Write the final `.wotr/config` file. Then:
 
 1. Verify the file parses as valid YAML
 2. Confirm icon safety: check every emoji in the config does NOT contain `\uFE0F`
-3. Tell the user how to test:
+3. **Verify every `inquire` script works**: Execute each inquire script's commands directly in the shell (with `WOTR_WORKTREE` set to the current repo root) and confirm the output is correct. If a script fails (command not found, connection refused, wrong output format, version format mismatch, etc.), debug and fix it before presenting the config to the user. Common issues to check:
+   - CLI tools may not be on `$PATH` — use `which`/`command -v` to verify, fall back to full paths (e.g., `/opt/homebrew/opt/libpq/bin/psql`)
+   - Database connections may require credentials — check docker-compose for passwords
+   - Version/identifier formats from migration files may not match the format stored in the tracking table (e.g., files named `V001__...` produce `1` after stripping, but the DB stores `001`) — compare both sides explicitly
+   - Filtering may be needed to skip non-version rows (e.g., flyway baseline entries like `0.1`)
+4. Tell the user how to test:
    ```
    wotr              # Launch TUI — resources should appear in the table
    wotr resources    # List all resources with ownership status
