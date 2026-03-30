@@ -152,6 +152,11 @@ echo
 # 3. Install binaries onto PATH
 GEM_BIN=$("$GEM" environment | awk '/EXECUTABLE DIRECTORY/ {print $NF}')
 symlink_bin "wotr" "$GEM_BIN"
+# Remove stale RubyGems binstubs for non-Ruby scripts (older versions registered these
+# as gem executables, causing Ruby to parse bash scripts as Ruby code).
+for stale in wotr-default-setup wotr-launch-claude wotr-output wotr-rename-tab; do
+  rm -f "$GEM_BIN/$stale" 2>/dev/null
+done
 # Helper scripts are bash/ruby — copy directly so the shell runs them, not RubyGems
 GEM_DIR=$("$GEM" environment gemdir)
 for script in wotr-default-setup wotr-launch-claude wotr-output wotr-rename-tab; do

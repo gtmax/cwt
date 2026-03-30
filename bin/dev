@@ -54,11 +54,6 @@ case "$COMMAND" in
     echo "Using Ruby $("$RUBY" -e 'print RUBY_VERSION')"
     echo "Building gem..."
     "$RUBY" -S gem build wotr.gemspec
-    # Remove stale gem bin wrappers that conflict with re-install
-    GEM_BIN_PRE=$("$GEM" environment | awk '/EXECUTABLE DIRECTORY/ {print $NF}')
-    for wrapper in wotr-output wotr-default-setup wotr-launch-claude wotr-rename-tab; do
-      rm -f "$GEM_BIN_PRE/$wrapper" 2>/dev/null
-    done
     echo "Installing gem..."
     "$GEM" install --force wotr-*.gem
     rm -f wotr-*.gem
