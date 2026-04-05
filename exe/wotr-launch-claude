@@ -10,6 +10,9 @@
 DIR="${WOTR_WORKTREE:-$(pwd)}"
 cd "$DIR"
 
+# Any extra arguments are passed through to claude (e.g. --dangerously-skip-permissions).
+EXTRA_ARGS=("$@")
+
 # Try to continue the last conversation; fall back to a fresh session.
 # On failure, clear the "no session found" message before starting fresh.
-claude --continue || { printf '\e[H\e[2J'; exec claude; }
+claude --continue "${EXTRA_ARGS[@]}" || { printf '\e[H\e[2J'; exec claude "${EXTRA_ARGS[@]}"; }
