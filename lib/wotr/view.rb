@@ -393,6 +393,9 @@ module Wotr
       )
 
       frame.render_widget(input, area)
+
+      # Position the terminal cursor inside the input field (1 cell border offset)
+      frame.set_cursor_position(area.x + 1 + model.cursor_pos, area.y + 1)
     end
 
     def self.wrap_text(text, width)

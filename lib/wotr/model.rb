@@ -37,7 +37,7 @@ module Wotr
     attr_reader :repository, :selection_index, :mode, :input_buffer,
                 :running, :fetch_generation, :filter_query,
                 :log_entries, :log_scroll_offset, :task_label,
-                :verbose
+                :verbose, :cursor_pos
     attr_accessor :resume_to, :mouse_areas
     attr_writer :selection_index
 
@@ -47,6 +47,7 @@ module Wotr
       @selection_index = 0
       @mode = :normal
       @input_buffer = String.new
+      @cursor_pos = 0
       @filter_query = String.new
       @running = true
       @fetch_generation = 0
@@ -246,7 +247,10 @@ module Wotr
 
     def set_mode(mode)
       @mode = mode
-      @input_buffer = String.new if mode == :creating
+      if mode == :creating
+        @input_buffer = String.new
+        @cursor_pos = 0
+      end
     end
 
     def set_filter(query)
@@ -259,7 +263,8 @@ module Wotr
         @filter_query << char
         @selection_index = 0
       else
-        @input_buffer << char
+        @input_buffer.insert(@cursor_pos, char)
+        @cursor_pos += char.length
       end
     end
 
@@ -267,9 +272,30 @@ module Wotr
       if @mode == :filtering
         @filter_query.chop!
         @selection_index = 0
-      else
-        @input_buffer.chop!
+      elsif @cursor_pos > 0
+        @input_buffer.slice!(@cursor_pos - 1)
+        @cursor_pos -= 1
       end
+    end
+
+    def input_delete
+      @input_buffer.slice!(@cursor_pos) if @cursor_pos < @input_buffer.length
+    end
+
+    def cursor_left
+      @cursor_pos -= 1 if @cursor_pos > 0
+    end
+
+    def cursor_right
+      @cursor_pos += 1 if @cursor_pos < @input_buffer.length
+    end
+
+    def cursor_home
+      @cursor_pos = 0
+    end
+
+    def cursor_end
+      @cursor_pos = @input_buffer.length
     end
 
     def selected_worktree

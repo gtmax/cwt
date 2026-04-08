@@ -60,6 +60,16 @@ module Wotr
           model.set_mode(:normal)
         elsif event.backspace?
           model.input_backspace
+        elsif event.delete?
+          model.input_delete
+        elsif event.left?
+          model.cursor_left
+        elsif event.right?
+          model.cursor_right
+        elsif event.home?
+          model.cursor_home
+        elsif event.end?
+          model.cursor_end
         elsif event.to_s.length == 1
           model.input_append(event.to_s)
         end
