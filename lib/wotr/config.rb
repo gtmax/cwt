@@ -165,7 +165,7 @@ module Wotr
       script = resource(name)&.fetch("inquire", nil)
       return { ran: false } if script.nil?
 
-      stdout, success = run_script_capture(script, env: env, chdir: chdir, label: "inquire:#{name}")
+      stdout, success = run_script_capture(script, env: env, chdir: chdir, label: "inquire:#{name}", timeout: 15)
       data = parse_json_output(stdout)
 
       { ran: true, success: !!success, data: data, stdout: stdout }
@@ -202,13 +202,52 @@ module Wotr
     end
 
     # Run a script capturing stdout; both stdout and stderr are logged.
-    def run_script_capture(content, env: {}, chdir: Dir.pwd, label: nil)
+    # Pass timeout: (seconds) to kill the process if it runs too long.
+    def run_script_capture(content, env: {}, chdir: Dir.pwd, label: nil, timeout: nil)
       write_tmpscript("#!/usr/bin/env bash\n#{content}") do |path|
         full_env = env.merge("WOTR_LOG" => log_dest)
-        stdout, stderr, status = Open3.capture3(full_env, path, chdir: chdir)
-        full_label = [label || path, File.basename(chdir)].compact.join(' @ ')
-        append_to_log(stdout, stderr, label: full_label)
-        [stdout, status.success?]
+        if timeout
+          stdout = +""
+          stderr = +""
+          status = nil
+          Open3.popen3(full_env, path, chdir: chdir) do |_in, out, err, wait_thr|
+            _in.close
+            deadline = Time.now + timeout
+            readers = [out, err]
+            until readers.empty?
+              remaining = deadline - Time.now
+              if remaining <= 0
+                Process.kill('TERM', wait_thr.pid) rescue nil
+                sleep 0.1
+                Process.kill('KILL', wait_thr.pid) rescue nil
+                stderr << "\nwotr: killed after #{timeout}s timeout"
+                break
+              end
+              ready = IO.select(readers, nil, nil, [remaining, 0.5].min)
+              next unless ready
+
+              ready[0].each do |io|
+                begin
+                  chunk = io.read_nonblock(8192)
+                  (io == out ? stdout : stderr) << chunk
+                rescue IO::WaitReadable
+                  # retry on next select
+                rescue EOFError
+                  readers.delete(io)
+                end
+              end
+            end
+            status = wait_thr.value
+          end
+          full_label = [label || path, File.basename(chdir)].compact.join(' @ ')
+          append_to_log(stdout, stderr, label: full_label)
+          [stdout, status&.success? || false]
+        else
+          stdout, stderr, status = Open3.capture3(full_env, path, chdir: chdir)
+          full_label = [label || path, File.basename(chdir)].compact.join(' @ ')
+          append_to_log(stdout, stderr, label: full_label)
+          [stdout, status.success?]
+        end
       end
     end
 
