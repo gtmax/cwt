@@ -69,7 +69,10 @@ module Wotr
     # status: false (default) marks script output shown only in verbose mode.
     # Status entries track output_count and last_output for their following output lines.
 
+    ANSI_ESCAPE_RE = /\e\[[0-9;]*[A-Za-z]/
+
     def log_message(text, style: :dim, status: false)
+      text = text.gsub(ANSI_ESCAPE_RE, '')
       @log_entries << { text: text, style: style, status: status }
       @log_entries.shift if @log_entries.size > LOG_PANE_MAX_LINES
       if @log_scroll_pinned
