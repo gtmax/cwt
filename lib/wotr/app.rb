@@ -452,50 +452,47 @@ module Wotr
 
       Thread.new do
         begin
-          icons_by_path = Hash.new { |h, k| h[k] = [] }
+          # Cap total concurrent inquires (Queue used as a counting semaphore)
+          sem = Queue.new
+          INQUIRE_CONCURRENCY.times { sem << :token }
 
-          cfg.resource_names.each do |name|
-            icon = cfg.resource(name)&.fetch("icon", "•") || "•"
-
-            run_inquire = lambda do |wt|
+          run_inquire = lambda do |name, wt|
+            token = sem.pop
+            begin
               env = env_base.merge("WOTR_WORKTREE" => wt.path)
               main_queue << { type: :task_log_line, line: "inquire #{name} @ #{wt.branch || File.basename(wt.path)}" }
               result = cfg.run_inquire(name, env: env, chdir: wt.path)
-              # Stream captured output for verbose mode
               if result[:stdout] && !result[:stdout].strip.empty?
                 result[:stdout].each_line { |l| main_queue << { type: :task_log_line, line: l.chomp } }
               end
               result
+            ensure
+              sem << token
             end
+          end
 
-            if cfg.exclusive?(name)
-              worktrees.each do |wt|
-                result = run_inquire.call(wt)
-                next unless result[:ran] && result[:success]
-                next unless result[:data]["status"] == "owned"
-
-                owner = result[:data]["owner"]
-                if owner
-                  owner_real = File.realpath(owner) rescue owner
-                  target = worktrees.find do |w|
-                    wt_real = File.realpath(w.path) rescue w.path
-                    owner_real == wt_real || owner_real.start_with?(wt_real + "/")
-                  end
-                  icons_by_path[target.path] << icon if target
-                else
-                  icons_by_path[wt.path] << icon
-                end
-                break
-              end
-            else
-              worktrees.each do |wt|
-                result = run_inquire.call(wt)
-                next unless result[:ran] && result[:success]
-                icons_by_path[wt.path] << icon if result[:data]["status"] == "compatible"
-              end
+          # Run resources in parallel; collect [icon, [paths]] per resource so
+          # icon stacking remains deterministic in resource-definition order.
+          resource_threads = cfg.resource_names.map do |name|
+            Thread.new do
+              icon = cfg.resource(name)&.fetch("icon", "•") || "•"
+              paths = if cfg.exclusive?(name)
+                        collect_exclusive_owners(name, worktrees, run_inquire)
+                      else
+                        collect_compatible_paths(name, worktrees, run_inquire)
+                      end
+              [icon, paths]
+            rescue StandardError
+              nil
             end
-          rescue StandardError
-            # Don't let one resource failure abort the rest
+          end
+
+          icons_by_path = Hash.new { |h, k| h[k] = [] }
+          resource_threads.each do |t|
+            result = t.value
+            next unless result
+            icon, paths = result
+            paths.each { |p| icons_by_path[p] << icon }
           end
 
           main_queue << {
@@ -506,6 +503,47 @@ module Wotr
           main_queue << { type: :finish_background_activity }
         end
       end
+    end
+
+    INQUIRE_CONCURRENCY = 8
+
+    # Sequential across worktrees to preserve the early-break (stop after first owner found).
+    def self.collect_exclusive_owners(name, worktrees, run_inquire)
+      collected = []
+      worktrees.each do |wt|
+        result = run_inquire.call(name, wt)
+        next unless result[:ran] && result[:success]
+        next unless result[:data]["status"] == "owned"
+
+        owner = result[:data]["owner"]
+        if owner
+          owner_real = File.realpath(owner) rescue owner
+          target = worktrees.find do |w|
+            wt_real = File.realpath(w.path) rescue w.path
+            owner_real == wt_real || owner_real.start_with?(wt_real + "/")
+          end
+          collected << target.path if target
+        else
+          collected << wt.path
+        end
+        break
+      end
+      collected
+    end
+
+    # Parallel across worktrees; non-exclusive resources have no early-break.
+    def self.collect_compatible_paths(name, worktrees, run_inquire)
+      threads = worktrees.map do |wt|
+        Thread.new do
+          result = run_inquire.call(name, wt)
+          if result[:ran] && result[:success] && result[:data]["status"] == "compatible"
+            wt.path
+          end
+        rescue StandardError
+          nil
+        end
+      end
+      threads.map(&:value).compact
     end
 
     def self.start_background_fetch(model, main_queue)
